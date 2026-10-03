@@ -91,6 +91,7 @@ export class OrderLifecycleService {
 
   async overrideDelivery(orderId: string, dto: OverrideDeliveryDetailsDto, actorStaffUserId: string) {
     await this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${orderId}::uuid FOR UPDATE`;
       const order = await tx.order.findUnique({ 
         where: { id: orderId },
         include: { deliveryDrop: true }

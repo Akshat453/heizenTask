@@ -149,4 +149,9 @@ export class BusinessTimeService {
       end: new Date(endZdt.epochMilliseconds),
     };
   }
+
+  async getBusinessDate(): Promise<string> {
+    const cfg = await this.settings.loadForBusinessTime();
+    return Temporal.Now.plainDateISO(cfg.timezone).toString();
+  }
 }

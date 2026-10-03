@@ -25,7 +25,7 @@ export default function LoginPage() {
 
   useEffect(() => {
     if (status === "authenticated") {
-      router.replace("/");
+      router.replace("/dashboard");
     }
   }, [router, status]);
 
@@ -33,7 +33,7 @@ export default function LoginPage() {
     setFormError(null);
     try {
       await login(input);
-      router.replace("/");
+      router.replace("/dashboard");
     } catch (error) {
       setFormError(
         error instanceof ApiError

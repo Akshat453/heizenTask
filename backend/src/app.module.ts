@@ -21,6 +21,7 @@ import { KitchenModule } from './kitchen/kitchen.module.js';
 import { DispatchModule } from './dispatch/dispatch.module.js';
 import { DriverModule } from './driver/driver.module.js';
 import { BillingModule } from './billing/billing.module.js';
+import { DashboardModule } from './dashboard/dashboard.module.js';
 
 @Module({
   imports: [
@@ -45,6 +46,7 @@ import { BillingModule } from './billing/billing.module.js';
     DispatchModule,
     DriverModule,
     BillingModule,
+    DashboardModule,
   ],
   providers: [
     {

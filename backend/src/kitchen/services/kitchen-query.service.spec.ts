@@ -56,6 +56,7 @@ describe('KitchenQueryService', () => {
         employee: { name: 'Emp A' },
         deliveryDate: new Date('2025-01-06'),
         deliveryAt: new Date(Date.now() + 1000 * 60 * 120), // 2 hours from now
+        deliveryLeadMinutesSnapshot: 60,
         kitchenReadyAt: null,
       },
       combination: {
@@ -76,7 +77,7 @@ describe('KitchenQueryService', () => {
       // Since now is 60m before deadline, it should be ON_TRACK.
 
       prisma.prepUnit.findMany.mockResolvedValue([
-        { ...baseUnit, order: { ...baseUnit.order, deliveryAt: new Date(now.getTime() + 1000 * 60 * 150) } }
+        { ...baseUnit, order: { ...baseUnit.order, deliveryAt: new Date(now.getTime() + 1000 * 60 * 160) } }
       ]);
 
       const items = await service.getKitchenBoard('2025-01-06');
@@ -99,8 +100,8 @@ describe('KitchenQueryService', () => {
       settingsService.getSettings.mockResolvedValue(baseSettings);
       const now = new Date();
       
-      const atRiskDelivery = new Date(now.getTime() + 1000 * 60 * 75); // planned = now + 15m. (within 30m risk window)
-      const lateDelivery = new Date(now.getTime() + 1000 * 60 * 30); // planned = now - 30m. (late)
+      const atRiskDelivery = new Date(now.getTime() + 1000 * 60 * 135); // planned = now + 15m. (within 30m risk window)
+      const lateDelivery = new Date(now.getTime() + 1000 * 60 * 30); // planned = now - 90m. (late)
 
       prisma.prepUnit.findMany.mockResolvedValue([
         { ...baseUnit, id: 'unit-at-risk', order: { ...baseUnit.order, deliveryAt: atRiskDelivery } },

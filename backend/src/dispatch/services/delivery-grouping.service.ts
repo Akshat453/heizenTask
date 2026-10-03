@@ -129,11 +129,11 @@ export class DeliveryGroupingService {
     });
 
     // Filter to only orders matching this exact canonical key
-    const matchingOrders = candidateOrders.filter((o: any) => this.getCanonicalKey(o) === canonicalKey);
+    const matchingOrders = candidateOrders.filter((o) => this.getCanonicalKey(o) === canonicalKey);
     if (matchingOrders.length === 0) return;
 
     // Filter out orders already attached to immutable drops (OUT_FOR_DELIVERY, DELIVERED)
-    const eligibleOrders = matchingOrders.filter((o: any) => {
+    const eligibleOrders = matchingOrders.filter((o) => {
       if (!o.deliveryDropId) return true;
       return o.deliveryDrop?.status === DeliveryDropStatus.DISPATCH_READY;
     });
@@ -141,7 +141,7 @@ export class DeliveryGroupingService {
     if (eligibleOrders.length === 0) return;
 
     // Check if ALL eligible orders are Kitchen Ready
-    const allReady = eligibleOrders.every((o: any) => o.kitchenReadyAt !== null);
+    const allReady = eligibleOrders.every((o) => o.kitchenReadyAt !== null);
     if (!allReady) {
       // Not ready. Do nothing. They will remain without a drop.
       return;
@@ -149,7 +149,7 @@ export class DeliveryGroupingService {
 
     // All eligible orders are ready. They need to be in a DISPATCH_READY drop.
     // Find if there is an existing DISPATCH_READY drop for any of these orders.
-    let existingDropId = eligibleOrders.find((o: any) => o.deliveryDropId)?.deliveryDropId;
+    let existingDropId = eligibleOrders.find((o) => o.deliveryDropId)?.deliveryDropId;
 
     if (!existingDropId) {
       // Create a new DISPATCH_READY drop
@@ -170,7 +170,7 @@ export class DeliveryGroupingService {
         });
         
         if (driver?.isActive) {
-          const hasDeliverPerm = driver.role.permissions.some((rp: any) => rp.permission.key === 'driver.own_drops.deliver');
+          const hasDeliverPerm = driver.role.permissions.some((rp) => rp.permission.key === 'driver.own_drops.deliver');
           if (hasDeliverPerm) {
             driverIdToAssign = driver.id;
           }
@@ -197,7 +197,7 @@ export class DeliveryGroupingService {
     }
 
     // Attach all unattached eligible orders to this drop
-    const unattachedIds = eligibleOrders.filter((o: any) => o.deliveryDropId !== existingDropId).map((o: any) => o.id);
+    const unattachedIds = eligibleOrders.filter((o) => o.deliveryDropId !== existingDropId).map((o) => o.id);
     if (unattachedIds.length > 0) {
       await tx.order.updateMany({
         where: { id: { in: unattachedIds } },
@@ -207,7 +207,7 @@ export class DeliveryGroupingService {
       // Record events
       const now = new Date();
       await tx.orderEvent.createMany({
-        data: unattachedIds.map((id: any) => ({
+        data: unattachedIds.map((id) => ({
           orderId: id,
           type: OrderEventType.DISPATCH_READY,
           occurredAt: now,

@@ -28,7 +28,7 @@ export class InvoiceCreationService {
     const sortedIds = uniqueIds.sort();
 
     try {
-      return await this.prisma.$transaction(async (tx: any) => {
+      return await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
         // 1. Obtain row-level locks on requested Orders
         await tx.$queryRaw`SELECT id FROM "Order" WHERE id IN (${Prisma.join(sortedIds)}) ORDER BY id FOR UPDATE`;
 
@@ -43,7 +43,7 @@ export class InvoiceCreationService {
         }
 
         let totalCents = 0;
-        const invoiceOrderData: any[] = [];
+        const invoiceOrderData: { orderId: string; amountCents: number }[] = [];
 
         for (const order of orders) {
           // Verify Company

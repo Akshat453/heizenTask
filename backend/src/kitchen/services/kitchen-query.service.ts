@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service.js';
 import { SettingsService } from '../../settings/settings.service.js';
 import { OrderStatus } from '../../generated/prisma/enums.js';
+import { calculatePlannedKitchenReadyAt } from './kitchen-timing.helper.js';
 
 export type KitchenPrepState = 'NOT_STARTED' | 'STARTED' | 'DONE';
 export type KitchenTimingState = 'ON_TRACK' | 'AT_RISK' | 'LATE' | 'COMPLETE';
@@ -43,8 +44,7 @@ export class KitchenQueryService {
   async getKitchenBoard(dateStr: string, stationIdFilter?: string): Promise<KitchenBoardItem[]> {
     const date = new Date(dateStr);
     const settings = await this.settingsService.getSettings();
-    // If a unit is due within the next 60 minutes and is not done, it is at risk
-    const atRiskWindowMs = 60 * 60 * 1000;
+    const atRiskWindowMs = (settings.settings.atRiskWindowMinutes || 30) * 60 * 1000;
     const now = new Date();
 
     const where: any = {
@@ -69,6 +69,7 @@ export class KitchenQueryService {
             orderNumber: true,
             deliveryDate: true,
             deliveryAt: true,
+            deliveryLeadMinutesSnapshot: true,
             kitchenReadyAt: true,
             company: { select: { name: true } },
             employee: { select: { name: true } },
@@ -86,7 +87,11 @@ export class KitchenQueryService {
     });
 
     const items: KitchenBoardItem[] = prepUnits.map(unit => {
-      const plannedKitchenReadyAt = new Date(unit.order.deliveryAt.getTime() - (settings.settings.kitchenReadyBufferMinutes * 60 * 1000));
+      const plannedKitchenReadyAt = calculatePlannedKitchenReadyAt(
+        unit.order.deliveryAt,
+        unit.order.deliveryLeadMinutesSnapshot,
+        settings.settings.kitchenReadyBufferMinutes,
+      );
       
       let prepState: KitchenPrepState = 'NOT_STARTED';
       if (unit.doneAt) {

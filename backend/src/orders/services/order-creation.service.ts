@@ -1,4 +1,4 @@
-import { Injectable, InternalServerErrorException, NotFoundException, ConflictException } from '@nestjs/common';
+import { Injectable, InternalServerErrorException, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service.js';
 import { PriceResolverService } from '../../pricing/price-resolver.service.js';
 import { OrderValidationService } from './order-validation.service.js';
@@ -45,15 +45,18 @@ export class OrderCreationService {
     let totalCents = 0;
     
     // Process line items
-    const createLinesData = [];
+    const createLinesData: any[] = [];
     for (const line of dto.lines) {
       const dish = dishMap.get(line.dishId)!;
       const resolvedDishPrice = await this.priceResolver.resolveDishPrice(tierId, dish.id);
-      const dishPriceCents = resolvedDishPrice.priceCents ?? dish.costCents;
+      if (resolvedDishPrice.priceCents === null) {
+        throw new BadRequestException(`Dish ${dish.id} is unavailable or unpriced for this employee.`);
+      }
+      const dishPriceCents = resolvedDishPrice.priceCents;
 
       let lineTotalCents = 0;
       let lineTotalQty = 0;
-      const createCombinationsData = [];
+      const createCombinationsData: any[] = [];
 
       for (const combo of line.combinations) {
         let comboUnitPriceCents = dishPriceCents;
@@ -76,7 +79,10 @@ export class OrderCreationService {
           }
 
           const resolvedOptPrice = await this.priceResolver.resolveOptionPrice(tierId, opt.optionId);
-          const optPriceCents = resolvedOptPrice.priceCents ?? optionEntity!.costCents;
+          if (resolvedOptPrice.priceCents === null) {
+            throw new BadRequestException(`Option ${opt.optionId} is unavailable or unpriced.`);
+          }
+          const optPriceCents = resolvedOptPrice.priceCents;
 
           comboUnitPriceCents += optPriceCents + portionExtraCents;
           
@@ -228,15 +234,18 @@ export class OrderCreationService {
 
     let totalCents = 0;
     
-    const createLinesData = [];
+    const createLinesData: any[] = [];
     for (const line of linesDto) {
       const dish = dishMap.get(line.dishId)!;
       const resolvedDishPrice = await this.priceResolver.resolveDishPrice(tierId, dish.id);
-      const dishPriceCents = resolvedDishPrice.priceCents ?? dish.costCents;
+      if (resolvedDishPrice.priceCents === null) {
+        throw new BadRequestException(`Dish ${dish.id} is unavailable or unpriced for this employee.`);
+      }
+      const dishPriceCents = resolvedDishPrice.priceCents;
 
       let lineTotalCents = 0;
       let lineTotalQty = 0;
-      const createCombinationsData = [];
+      const createCombinationsData: any[] = [];
 
       for (const combo of line.combinations) {
         let comboUnitPriceCents = dishPriceCents;
@@ -258,7 +267,10 @@ export class OrderCreationService {
           }
 
           const resolvedOptPrice = await this.priceResolver.resolveOptionPrice(tierId, opt.optionId);
-          const optPriceCents = resolvedOptPrice.priceCents ?? optionEntity!.costCents;
+          if (resolvedOptPrice.priceCents === null) {
+            throw new BadRequestException(`Option ${opt.optionId} is unavailable or unpriced.`);
+          }
+          const optPriceCents = resolvedOptPrice.priceCents;
 
           comboUnitPriceCents += optPriceCents + portionExtraCents;
           
@@ -308,33 +320,35 @@ export class OrderCreationService {
     }
 
     // Delete existing graph and replace with new
-    await this.prisma.orderLine.deleteMany({ where: { orderId } });
+    return this.prisma.$transaction(async (tx) => {
+      await tx.orderLine.deleteMany({ where: { orderId } });
 
-    const order = await this.prisma.order.update({
-      where: { id: orderId },
-      data: {
-        status: newStatus,
-        deliveryAt,
-        deliveryAddressId: address.id,
-        deliveryAddressLabelSnapshot: address.label,
-        deliveryAddressLine1Snapshot: address.line1,
-        deliveryAddressLine2Snapshot: address.line2,
-        deliveryAddressCitySnapshot: address.city,
-        deliveryAddressRegionSnapshot: address.region,
-        deliveryAddressPostalCodeSnapshot: address.postalCode,
-        deliveryAddressCountrySnapshot: address.country,
-        packagingTypeId: packaging.id,
-        packagingNameSnapshot: packaging.name,
-        deliveryLeadMinutesSnapshot: company.deliveryLeadMinutes,
-        subtotalCents: totalCents,
-        totalCents,
-        placedAt: (placeNow && wasDraft) ? new Date() : existingOrder.placedAt,
-        lines: { create: createLinesData },
-        events: { create: events },
-      },
+      const order = await tx.order.update({
+        where: { id: orderId },
+        data: {
+          status: newStatus,
+          deliveryAt,
+          deliveryAddressId: address.id,
+          deliveryAddressLabelSnapshot: address.label,
+          deliveryAddressLine1Snapshot: address.line1,
+          deliveryAddressLine2Snapshot: address.line2,
+          deliveryAddressCitySnapshot: address.city,
+          deliveryAddressRegionSnapshot: address.region,
+          deliveryAddressPostalCodeSnapshot: address.postalCode,
+          deliveryAddressCountrySnapshot: address.country,
+          packagingTypeId: packaging.id,
+          packagingNameSnapshot: packaging.name,
+          deliveryLeadMinutesSnapshot: company.deliveryLeadMinutes,
+          subtotalCents: totalCents,
+          totalCents,
+          placedAt: (placeNow && wasDraft) ? new Date() : existingOrder.placedAt,
+          lines: { create: createLinesData },
+          events: { create: events },
+        },
+      });
+
+      return order;
     });
-
-    return order;
   }
 }
 

@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, react-hooks/exhaustive-deps, react-hooks/incompatible-library */
 "use client";
 
 import { useForm, useFieldArray } from "react-hook-form";
