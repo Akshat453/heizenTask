@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { companiesApi, type Company } from "@/lib/api";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { Plus, Edit2 } from "lucide-react";
+import { Plus, Edit2, FileText } from "lucide-react";
 
 export default function CompaniesPage() {
   const [companies, setCompanies] = useState<Company[]>([]);
@@ -60,8 +60,11 @@ export default function CompaniesPage() {
                     {c.domains.map((d) => d.domain).join(", ")}
                   </td>
                   <td className="px-6 py-4">{c._count?.employees || 0}</td>
-                  <td className="px-6 py-4 text-right">
-                    <Link href={`/companies/${c.id}/edit`} className={buttonVariants({ variant: "ghost", size: "icon" })}>
+                  <td className="px-6 py-4 text-right flex justify-end gap-2">
+                    <Link href={`/companies/${c.id}/billing`} className={buttonVariants({ variant: "ghost", size: "icon" })} title="Generate Invoice">
+                      <FileText className="h-4 w-4" />
+                    </Link>
+                    <Link href={`/companies/${c.id}/edit`} className={buttonVariants({ variant: "ghost", size: "icon" })} title="Edit Company">
                       <Edit2 className="h-4 w-4" />
                     </Link>
                   </td>

@@ -36,8 +36,10 @@ describe('KitchenQueryService', () => {
 
   describe('getKitchenBoard', () => {
     const baseSettings = {
-      atRiskWindowMinutes: 30,
-      kitchenReadyBufferMinutes: 60,
+      settings: {
+        atRiskWindowMinutes: 30,
+        kitchenReadyBufferMinutes: 60,
+      }
     };
 
     const baseUnit = {
@@ -74,7 +76,7 @@ describe('KitchenQueryService', () => {
       // Since now is 60m before deadline, it should be ON_TRACK.
 
       prisma.prepUnit.findMany.mockResolvedValue([
-        { ...baseUnit, deliveryAt: new Date(now.getTime() + 1000 * 60 * 120) }
+        { ...baseUnit, order: { ...baseUnit.order, deliveryAt: new Date(now.getTime() + 1000 * 60 * 150) } }
       ]);
 
       const items = await service.getKitchenBoard('2025-01-06');

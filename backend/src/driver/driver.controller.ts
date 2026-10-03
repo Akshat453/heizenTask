@@ -27,7 +27,7 @@ export class DriverController {
   async deliver(
     @Param('id') dropId: string,
     @Body('note') note: string,
-    @UploadedFile() photo: Express.Multer.File,
+    @UploadedFile() photo: any,
     @CurrentUser('id') driverId: string,
   ) {
     return this.lifecycleService.markDelivered(dropId, driverId, note, photo);

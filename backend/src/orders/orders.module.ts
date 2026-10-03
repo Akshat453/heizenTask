@@ -14,6 +14,8 @@ import { SettingsModule } from '../settings/settings.module.js';
 import { AuthModule } from '../auth/auth.module.js';
 import { StaffModule } from '../staff/staff.module.js';
 
+import { DispatchModule } from '../dispatch/dispatch.module.js';
+
 @Module({
   imports: [
     PrismaModule,
@@ -24,6 +26,7 @@ import { StaffModule } from '../staff/staff.module.js';
     SettingsModule,
     AuthModule,
     StaffModule,
+    DispatchModule,
   ],
   controllers: [OrdersController],
   providers: [

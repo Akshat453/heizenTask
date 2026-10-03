@@ -6,8 +6,10 @@ import { DriverQueryService } from './services/driver-query.service.js';
 import { DeliveryProofService } from './services/delivery-proof.service.js';
 import { DriverLifecycleService } from './services/driver-lifecycle.service.js';
 
+import { AuthModule } from '../auth/auth.module.js';
+
 @Module({
-  imports: [PrismaModule, BusinessTimeModule],
+  imports: [PrismaModule, BusinessTimeModule, AuthModule],
   controllers: [DriverController],
   providers: [
     DriverQueryService,

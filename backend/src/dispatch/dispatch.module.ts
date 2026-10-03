@@ -6,8 +6,11 @@ import { DispatchQueryService } from './services/dispatch-query.service.js';
 import { DeliveryGroupingService } from './services/delivery-grouping.service.js';
 import { DispatchLifecycleService } from './services/dispatch-lifecycle.service.js';
 
+import { DriverModule } from '../driver/driver.module.js';
+import { AuthModule } from '../auth/auth.module.js';
+
 @Module({
-  imports: [PrismaModule, BusinessTimeModule],
+  imports: [PrismaModule, BusinessTimeModule, DriverModule, AuthModule],
   controllers: [DispatchController],
   providers: [
     DispatchQueryService,

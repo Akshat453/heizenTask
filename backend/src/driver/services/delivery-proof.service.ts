@@ -31,7 +31,7 @@ export class DeliveryProofService {
   /**
    * Uploads a file to S3 and returns the object key.
    */
-  async uploadPhoto(dropId: string, file: Express.Multer.File): Promise<string> {
+  async uploadPhoto(dropId: string, file: any): Promise<string> {
     if (!this.s3Client || !this.bucket) {
       throw new BadRequestException('S3 is not configured for photo uploads on this server');
     }

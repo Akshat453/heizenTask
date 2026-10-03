@@ -14,7 +14,7 @@ export class DriverLifecycleService {
     dropId: string,
     driverId: string,
     note?: string,
-    photo?: Express.Multer.File,
+    photo?: any,
   ) {
     // 1. Initial verification before upload
     const drop = await this.prisma.deliveryDrop.findUnique({

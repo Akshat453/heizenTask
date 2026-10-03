@@ -16,7 +16,7 @@ export class DispatchQueryService {
     let dateFilter = {};
     if (query.date) {
       // Use BusinessTimeService to get the UTC bounds for this business date
-      const { start, end } = this.businessTime.getBusinessDateBounds(query.date);
+      const { start, end } = await this.businessTime.getBusinessDateBounds(query.date);
       dateFilter = {
         scheduledDeliveryAt: {
           gte: start,

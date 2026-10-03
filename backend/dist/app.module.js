@@ -23,6 +23,10 @@ import { ReferenceDataModule } from './reference-data/reference-data.module.js';
 import { SettingsModule } from './settings/settings.module.js';
 import { StaffModule } from './staff/staff.module.js';
 import { OrdersModule } from './orders/orders.module.js';
+import { KitchenModule } from './kitchen/kitchen.module.js';
+import { DispatchModule } from './dispatch/dispatch.module.js';
+import { DriverModule } from './driver/driver.module.js';
+import { BillingModule } from './billing/billing.module.js';
 let AppModule = class AppModule {
 };
 AppModule = __decorate([
@@ -45,6 +49,10 @@ AppModule = __decorate([
             SettingsModule,
             BusinessTimeModule,
             OrdersModule,
+            KitchenModule,
+            DispatchModule,
+            DriverModule,
+            BillingModule,
         ],
         providers: [
             {

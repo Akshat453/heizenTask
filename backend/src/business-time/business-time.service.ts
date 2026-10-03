@@ -131,4 +131,22 @@ export class BusinessTimeService {
     }
     return results;
   }
+
+  async getTimezone(): Promise<string> {
+    const cfg = await this.settings.loadForBusinessTime();
+    return cfg.timezone;
+  }
+
+  async getBusinessDateBounds(isoDate: string): Promise<{ start: Date; end: Date }> {
+    const cfg = await this.settings.loadForBusinessTime();
+    const tz = cfg.timezone;
+    const pd = Temporal.PlainDate.from(isoDate);
+    const startZdt = pd.toZonedDateTime({ timeZone: tz, plainTime: Temporal.PlainTime.from({ hour: 0, minute: 0 }) });
+    const endZdt = pd.add({ days: 1 }).toZonedDateTime({ timeZone: tz, plainTime: Temporal.PlainTime.from({ hour: 0, minute: 0 }) });
+    
+    return {
+      start: new Date(startZdt.epochMilliseconds),
+      end: new Date(endZdt.epochMilliseconds),
+    };
+  }
 }

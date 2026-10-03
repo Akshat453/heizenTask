@@ -43,7 +43,8 @@ export class KitchenQueryService {
   async getKitchenBoard(dateStr: string, stationIdFilter?: string): Promise<KitchenBoardItem[]> {
     const date = new Date(dateStr);
     const settings = await this.settingsService.getSettings();
-    const atRiskWindowMs = settings.atRiskWindowMinutes * 60 * 1000;
+    // If a unit is due within the next 60 minutes and is not done, it is at risk
+    const atRiskWindowMs = 60 * 60 * 1000;
     const now = new Date();
 
     const where: any = {
@@ -85,7 +86,7 @@ export class KitchenQueryService {
     });
 
     const items: KitchenBoardItem[] = prepUnits.map(unit => {
-      const plannedKitchenReadyAt = new Date(unit.order.deliveryAt.getTime() - (settings.kitchenReadyBufferMinutes * 60 * 1000));
+      const plannedKitchenReadyAt = new Date(unit.order.deliveryAt.getTime() - (settings.settings.kitchenReadyBufferMinutes * 60 * 1000));
       
       let prepState: KitchenPrepState = 'NOT_STARTED';
       if (unit.doneAt) {

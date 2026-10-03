@@ -13,9 +13,10 @@ export class DriverQueryService {
     // Determine the current business date
     const now = new Date();
     // Assuming businessTime.getBusinessDateBounds for today's date
-    const isoToday = new Date(now.toLocaleString('en-US', { timeZone: this.businessTime.getTimezone() })).toISOString().split('T')[0]!;
+    const tz = await this.businessTime.getTimezone();
+    const isoToday = new Date(now.toLocaleString('en-US', { timeZone: tz })).toISOString().split('T')[0]!;
     
-    const { start, end } = this.businessTime.getBusinessDateBounds(isoToday);
+    const { start, end } = await this.businessTime.getBusinessDateBounds(isoToday);
 
     const data = await this.prisma.deliveryDrop.findMany({
       where: {
