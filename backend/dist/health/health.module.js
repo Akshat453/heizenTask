@@ -10,7 +10,7 @@ let HealthModule = class HealthModule {
 };
 HealthModule = __decorate([
     Module({
-        controllers: [HealthController]
+        controllers: [HealthController],
     })
 ], HealthModule);
 export { HealthModule };

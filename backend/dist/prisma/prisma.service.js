@@ -8,16 +8,13 @@ var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../generated/prisma/client.js';
 let PrismaService = class PrismaService extends PrismaClient {
-    constructor() {
-        const connectionString = process.env.DATABASE_URL;
-        if (!connectionString) {
-            throw new Error('DATABASE_URL is missing');
-        }
+    constructor(config) {
         const adapter = new PrismaPg({
-            connectionString,
+            connectionString: config.getOrThrow('DATABASE_URL'),
         });
         super({ adapter });
     }
@@ -27,7 +24,7 @@ let PrismaService = class PrismaService extends PrismaClient {
 };
 PrismaService = __decorate([
     Injectable(),
-    __metadata("design:paramtypes", [])
+    __metadata("design:paramtypes", [ConfigService])
 ], PrismaService);
 export { PrismaService };
 //# sourceMappingURL=prisma.service.js.map

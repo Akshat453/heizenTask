@@ -8,6 +8,7 @@ var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
 import { Controller, Get } from '@nestjs/common';
+import { Public } from '../auth/decorators/public.decorator.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 let HealthController = class HealthController {
     prisma;
@@ -41,6 +42,7 @@ __decorate([
     __metadata("design:returntype", Promise)
 ], HealthController.prototype, "databaseHealth", null);
 HealthController = __decorate([
+    Public(),
     Controller('health'),
     __metadata("design:paramtypes", [PrismaService])
 ], HealthController);
