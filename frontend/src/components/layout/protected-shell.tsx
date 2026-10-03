@@ -13,7 +13,16 @@ type NavigationItem = {
   requiredPermissions?: string[];
 };
 
-const navigation: NavigationItem[] = [{ label: "Home", href: "/" }];
+const navigation: NavigationItem[] = [
+  { label: "Home", href: "/" },
+  { label: "Catalogue", href: "/catalogue", requiredPermissions: ["catalogue.read"] },
+  { label: "Menu", href: "/menu", requiredPermissions: ["catalogue.read"] },
+  { label: "Pricing", href: "/pricing", requiredPermissions: ["catalogue.read"] },
+  { label: "Companies", href: "/companies", requiredPermissions: ["companies.read"] },
+  { label: "Employees", href: "/employees", requiredPermissions: ["employees.read"] },
+  { label: "Ref. Data", href: "/reference-data", requiredPermissions: ["catalogue.manage"] },
+  { label: "Settings", href: "/settings", requiredPermissions: ["settings.read"] },
+];
 
 export function ProtectedShell({ children }: { children: ReactNode }) {
   const router = useRouter();
