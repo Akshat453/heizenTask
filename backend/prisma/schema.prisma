@@ -1,8 +1,6 @@
 // This is your Prisma schema file,
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
-// Get a free hosted Postgres database in seconds: `npx create-db`
-
 generator client {
   provider = "prisma-client"
   output   = "../src/generated/prisma"
@@ -10,4 +8,759 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+}
+
+enum Temperature {
+  HOT
+  COLD
+}
+
+enum PriceTierStrategy {
+  MANUAL
+  COST_MULTIPLIER
+  TIER_PERCENTAGE
+}
+
+enum DayOfWeek {
+  MONDAY
+  TUESDAY
+  WEDNESDAY
+  THURSDAY
+  FRIDAY
+  SATURDAY
+  SUNDAY
+}
+
+enum OrderStatus {
+  DRAFT
+  PLACED
+  CONFIRMED
+  CANCELLED
+  REJECTED
+  DELIVERED
+}
+
+enum OrderEventType {
+  ORDER_CREATED
+  ORDER_PLACED
+  ORDER_CONFIRMED
+  ORDER_REJECTED
+  ORDER_CANCELLED
+  DELIVERY_DETAILS_CHANGED
+  KITCHEN_STARTED
+  KITCHEN_READY
+  DISPATCH_READY
+  OUT_FOR_DELIVERY
+  DELIVERED
+}
+
+enum DeliveryDropStatus {
+  DISPATCH_READY
+  OUT_FOR_DELIVERY
+  DELIVERED
+}
+
+enum InvoiceStatus {
+  UNPAID
+  PAID
+}
+
+model StaffUser {
+  id           String   @id @default(uuid()) @db.Uuid
+  name         String
+  email        String   @unique
+  passwordHash String
+  roleId       String   @db.Uuid
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime @updatedAt @db.Timestamptz(3)
+
+  role                   Role           @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  defaultDriverCompanies Company[]      @relation("CompanyDefaultDriver")
+  createdOrders          Order[]        @relation("OrderCreatedBy")
+  orderEvents            OrderEvent[]   @relation("OrderEventActor")
+  startedPrepUnits       PrepUnit[]     @relation("PrepUnitStartedBy")
+  completedPrepUnits     PrepUnit[]     @relation("PrepUnitDoneBy")
+  assignedDeliveryDrops  DeliveryDrop[] @relation("DeliveryDropDriver")
+  createdInvoices        Invoice[]      @relation("InvoiceCreatedBy")
+  paidInvoices           Invoice[]      @relation("InvoicePaidBy")
+
+  @@index([roleId])
+}
+
+model Role {
+  id          String @id @default(uuid()) @db.Uuid
+  name        String @unique
+  description String
+
+  staffUsers  StaffUser[]
+  permissions RolePermission[]
+}
+
+model Permission {
+  id          String @id @default(uuid()) @db.Uuid
+  key         String @unique
+  description String
+
+  roles RolePermission[]
+}
+
+model RolePermission {
+  roleId       String @db.Uuid
+  permissionId String @db.Uuid
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@index([permissionId])
+}
+
+model Dish {
+  id                   String      @id @default(uuid()) @db.Uuid
+  name                 String
+  description          String
+  imageUrl             String
+  sku                  String      @unique
+  temperature          Temperature
+  costCents            Int
+  minimumOrderQuantity Int?
+  stationId            String?     @db.Uuid
+  isActive             Boolean     @default(true)
+  createdAt            DateTime    @default(now()) @db.Timestamptz(3)
+  updatedAt            DateTime    @updatedAt @db.Timestamptz(3)
+
+  station           KitchenStation?     @relation(fields: [stationId], references: [id], onDelete: SetNull)
+  allergens         DishAllergen[]
+  dietaryTags       DishDietaryTag[]
+  optionGroups      OptionGroup[]
+  menuCategoryItems MenuCategoryItem[]
+  hiddenByCompanies CompanyHiddenDish[]
+  tierPrices        DishTierPrice[]
+  orderLines        OrderLine[]
+
+  @@index([stationId, isActive])
+}
+
+model Option {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  costCents Int
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  allergens               OptionAllergen[]
+  dietaryTags             OptionDietaryTag[]
+  optionGroups            OptionGroupOption[]
+  tierPrices              OptionTierPrice[]
+  orderCombinationOptions OrderCombinationOption[]
+}
+
+model KitchenStation {
+  id           String  @id @default(uuid()) @db.Uuid
+  name         String  @unique
+  displayOrder Int
+  isActive     Boolean @default(true)
+
+  dishes    Dish[]
+  prepUnits PrepUnit[]
+
+  @@index([isActive, displayOrder])
+}
+
+model Allergen {
+  id       String  @id @default(uuid()) @db.Uuid
+  name     String  @unique
+  isActive Boolean @default(true)
+
+  dishes    DishAllergen[]
+  options   OptionAllergen[]
+  employees EmployeeAllergen[]
+}
+
+model DietaryTag {
+  id       String  @id @default(uuid()) @db.Uuid
+  name     String  @unique
+  isActive Boolean @default(true)
+
+  dishes    DishDietaryTag[]
+  options   OptionDietaryTag[]
+  employees EmployeeDietaryTag[]
+}
+
+model DishAllergen {
+  dishId     String @db.Uuid
+  allergenId String @db.Uuid
+
+  dish     Dish     @relation(fields: [dishId], references: [id], onDelete: Cascade)
+  allergen Allergen @relation(fields: [allergenId], references: [id], onDelete: Cascade)
+
+  @@id([dishId, allergenId])
+  @@index([allergenId])
+}
+
+model OptionAllergen {
+  optionId   String @db.Uuid
+  allergenId String @db.Uuid
+
+  option   Option   @relation(fields: [optionId], references: [id], onDelete: Cascade)
+  allergen Allergen @relation(fields: [allergenId], references: [id], onDelete: Cascade)
+
+  @@id([optionId, allergenId])
+  @@index([allergenId])
+}
+
+model DishDietaryTag {
+  dishId       String @db.Uuid
+  dietaryTagId String @db.Uuid
+
+  dish       Dish       @relation(fields: [dishId], references: [id], onDelete: Cascade)
+  dietaryTag DietaryTag @relation(fields: [dietaryTagId], references: [id], onDelete: Cascade)
+
+  @@id([dishId, dietaryTagId])
+  @@index([dietaryTagId])
+}
+
+model OptionDietaryTag {
+  optionId     String @db.Uuid
+  dietaryTagId String @db.Uuid
+
+  option     Option     @relation(fields: [optionId], references: [id], onDelete: Cascade)
+  dietaryTag DietaryTag @relation(fields: [dietaryTagId], references: [id], onDelete: Cascade)
+
+  @@id([optionId, dietaryTagId])
+  @@index([dietaryTagId])
+}
+
+model OptionGroup {
+  id           String  @id @default(uuid()) @db.Uuid
+  dishId       String  @db.Uuid
+  name         String
+  isRequired   Boolean @default(false)
+  usesPortions Boolean @default(false)
+  displayOrder Int
+
+  dish                    Dish                     @relation(fields: [dishId], references: [id], onDelete: Cascade)
+  options                 OptionGroupOption[]
+  portions                OptionGroupPortion[]
+  orderCombinationOptions OrderCombinationOption[]
+
+  @@index([dishId, displayOrder])
+}
+
+model OptionGroupOption {
+  optionGroupId String @db.Uuid
+  optionId      String @db.Uuid
+  displayOrder  Int
+
+  optionGroup OptionGroup @relation(fields: [optionGroupId], references: [id], onDelete: Cascade)
+  option      Option      @relation(fields: [optionId], references: [id], onDelete: Restrict)
+
+  @@id([optionGroupId, optionId])
+  @@index([optionId])
+  @@index([optionGroupId, displayOrder])
+}
+
+model PortionSize {
+  id           String  @id @default(uuid()) @db.Uuid
+  name         String  @unique
+  displayOrder Int
+  isActive     Boolean @default(true)
+
+  optionGroups            OptionGroupPortion[]
+  orderCombinationOptions OrderCombinationOption[]
+
+  @@index([isActive, displayOrder])
+}
+
+model OptionGroupPortion {
+  optionGroupId    String @db.Uuid
+  portionSizeId    String @db.Uuid
+  extraChargeCents Int
+  displayOrder     Int
+
+  optionGroup OptionGroup @relation(fields: [optionGroupId], references: [id], onDelete: Cascade)
+  portionSize PortionSize @relation(fields: [portionSizeId], references: [id], onDelete: Restrict)
+
+  @@id([optionGroupId, portionSizeId])
+  @@index([portionSizeId])
+  @@index([optionGroupId, displayOrder])
+}
+
+model MenuCategory {
+  id           String  @id @default(uuid()) @db.Uuid
+  name         String
+  slug         String  @unique
+  displayOrder Int
+  isActive     Boolean @default(true)
+  isSecret     Boolean @default(false)
+
+  items             MenuCategoryItem[]
+  hiddenByCompanies CompanyHiddenCategory[]
+
+  @@index([isActive, isSecret, displayOrder])
+}
+
+model MenuCategoryItem {
+  categoryId   String  @db.Uuid
+  dishId       String  @db.Uuid
+  displayOrder Int
+  isActive     Boolean @default(true)
+
+  category MenuCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  dish     Dish         @relation(fields: [dishId], references: [id], onDelete: Restrict)
+
+  @@id([categoryId, dishId])
+  @@index([dishId])
+  @@index([categoryId, isActive, displayOrder])
+}
+
+model CompanyHiddenCategory {
+  companyId  String @db.Uuid
+  categoryId String @db.Uuid
+
+  company  Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  category MenuCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@id([companyId, categoryId])
+  @@index([categoryId])
+}
+
+model CompanyHiddenDish {
+  companyId String @db.Uuid
+  dishId    String @db.Uuid
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  dish    Dish    @relation(fields: [dishId], references: [id], onDelete: Cascade)
+
+  @@id([companyId, dishId])
+  @@index([dishId])
+}
+
+model PriceTier {
+  id                  String            @id @default(uuid()) @db.Uuid
+  name                String            @unique
+  isDefault           Boolean           @default(false)
+  strategy            PriceTierStrategy
+  sourceTierId        String?           @db.Uuid
+  costMultiplierBps   Int?
+  sourceAdjustmentBps Int?
+  isActive            Boolean           @default(true)
+  createdAt           DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt           DateTime          @updatedAt @db.Timestamptz(3)
+
+  sourceTier   PriceTier?        @relation("PriceTierSource", fields: [sourceTierId], references: [id], onDelete: Restrict)
+  derivedTiers PriceTier[]       @relation("PriceTierSource")
+  dishPrices   DishTierPrice[]
+  optionPrices OptionTierPrice[]
+  companies    Company[]
+
+  @@index([isActive, isDefault])
+  @@index([sourceTierId])
+}
+
+model DishTierPrice {
+  dishId      String @db.Uuid
+  priceTierId String @db.Uuid
+  priceCents  Int
+
+  dish      Dish      @relation(fields: [dishId], references: [id], onDelete: Restrict)
+  priceTier PriceTier @relation(fields: [priceTierId], references: [id], onDelete: Restrict)
+
+  @@id([dishId, priceTierId])
+  @@index([priceTierId])
+}
+
+model OptionTierPrice {
+  optionId    String @db.Uuid
+  priceTierId String @db.Uuid
+  priceCents  Int
+
+  option    Option    @relation(fields: [optionId], references: [id], onDelete: Restrict)
+  priceTier PriceTier @relation(fields: [priceTierId], references: [id], onDelete: Restrict)
+
+  @@id([optionId, priceTierId])
+  @@index([priceTierId])
+}
+
+model Company {
+  id                       String   @id @default(uuid()) @db.Uuid
+  name                     String
+  billingContactName       String
+  billingContactEmail      String
+  billingContactPhone      String?
+  ownerEmployeeId          String?  @unique @db.Uuid
+  priceTierId              String?  @db.Uuid
+  defaultDeliveryTime      DateTime @db.Time(0)
+  deliveryLeadMinutes      Int      @default(60)
+  defaultPackagingTypeId   String   @db.Uuid
+  driverInstructions       String?
+  defaultDriverStaffUserId String?  @db.Uuid
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt                DateTime @updatedAt @db.Timestamptz(3)
+
+  ownerEmployee        Employee?               @relation("CompanyOwner", fields: [ownerEmployeeId], references: [id], onDelete: Restrict)
+  priceTier            PriceTier?              @relation(fields: [priceTierId], references: [id], onDelete: Restrict)
+  defaultPackagingType PackagingType           @relation("CompanyDefaultPackaging", fields: [defaultPackagingTypeId], references: [id], onDelete: Restrict)
+  defaultDriver        StaffUser?              @relation("CompanyDefaultDriver", fields: [defaultDriverStaffUserId], references: [id], onDelete: SetNull)
+  domains              CompanyDomain[]
+  addresses            CompanyAddress[]
+  workingDays          CompanyWorkingDay[]
+  holidays             CompanyHoliday[]
+  employees            Employee[]              @relation("CompanyEmployees")
+  hiddenCategories     CompanyHiddenCategory[]
+  hiddenDishes         CompanyHiddenDish[]
+  orders               Order[]
+  deliveryDrops        DeliveryDrop[]
+  invoices             Invoice[]
+
+  @@index([priceTierId])
+  @@index([defaultPackagingTypeId])
+  @@index([defaultDriverStaffUserId])
+}
+
+model CompanyDomain {
+  id        String @id @default(uuid()) @db.Uuid
+  companyId String @db.Uuid
+  domain    String @unique
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId])
+}
+
+model CompanyAddress {
+  id         String   @id @default(uuid()) @db.Uuid
+  companyId  String   @db.Uuid
+  label      String
+  line1      String
+  line2      String?
+  city       String
+  region     String?
+  postalCode String?
+  country    String
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt  DateTime @updatedAt @db.Timestamptz(3)
+
+  company                 Company    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  defaultAddressEmployees Employee[] @relation("EmployeeDefaultDeliveryAddress")
+  orders                  Order[]    @relation("OrderDeliveryAddress")
+
+  @@index([companyId, isActive])
+}
+
+model CompanyWorkingDay {
+  companyId String    @db.Uuid
+  dayOfWeek DayOfWeek
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@id([companyId, dayOfWeek])
+}
+
+model CompanyHoliday {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @db.Uuid
+  date      DateTime @db.Date
+  name      String?
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, date])
+  @@index([date])
+}
+
+model PackagingType {
+  id           String  @id @default(uuid()) @db.Uuid
+  name         String  @unique
+  displayOrder Int
+  isActive     Boolean @default(true)
+
+  defaultForCompanies Company[] @relation("CompanyDefaultPackaging")
+  orders              Order[]
+
+  @@index([isActive, displayOrder])
+}
+
+model Employee {
+  id                       String   @id @default(uuid()) @db.Uuid
+  companyId                String   @db.Uuid
+  name                     String
+  email                    String?
+  defaultDeliveryAddressId String?  @db.Uuid
+  canChooseDeliveryAddress Boolean  @default(false)
+  canChangeDeliveryTime    Boolean  @default(false)
+  canChangePackaging       Boolean  @default(false)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt                DateTime @updatedAt @db.Timestamptz(3)
+
+  company                Company              @relation("CompanyEmployees", fields: [companyId], references: [id], onDelete: Restrict)
+  ownedCompany           Company?             @relation("CompanyOwner")
+  defaultDeliveryAddress CompanyAddress?      @relation("EmployeeDefaultDeliveryAddress", fields: [defaultDeliveryAddressId], references: [id], onDelete: SetNull)
+  allergens              EmployeeAllergen[]
+  dietaryTags            EmployeeDietaryTag[]
+  orders                 Order[]
+
+  @@index([companyId])
+  @@index([defaultDeliveryAddressId])
+  @@index([email])
+}
+
+model EmployeeAllergen {
+  employeeId String @db.Uuid
+  allergenId String @db.Uuid
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  allergen Allergen @relation(fields: [allergenId], references: [id], onDelete: Cascade)
+
+  @@id([employeeId, allergenId])
+  @@index([allergenId])
+}
+
+model EmployeeDietaryTag {
+  employeeId   String @db.Uuid
+  dietaryTagId String @db.Uuid
+
+  employee   Employee   @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  dietaryTag DietaryTag @relation(fields: [dietaryTagId], references: [id], onDelete: Cascade)
+
+  @@id([employeeId, dietaryTagId])
+  @@index([dietaryTagId])
+}
+
+model Order {
+  id                                String      @id @default(uuid()) @db.Uuid
+  orderNumber                       String      @unique
+  employeeId                        String      @db.Uuid
+  companyId                         String      @db.Uuid
+  status                            OrderStatus @default(DRAFT)
+  deliveryDate                      DateTime    @db.Date
+  deliveryAt                        DateTime    @db.Timestamptz(3)
+  deliveryAddressId                 String?     @db.Uuid
+  deliveryAddressLabelSnapshot      String
+  deliveryAddressLine1Snapshot      String
+  deliveryAddressLine2Snapshot      String?
+  deliveryAddressCitySnapshot       String
+  deliveryAddressRegionSnapshot     String?
+  deliveryAddressPostalCodeSnapshot String?
+  deliveryAddressCountrySnapshot    String
+  packagingTypeId                   String      @db.Uuid
+  packagingNameSnapshot             String
+  deliveryLeadMinutesSnapshot       Int
+  subtotalCents                     Int         @default(0)
+  totalCents                        Int         @default(0)
+  billableTotalCents                Int?
+  placedAt                          DateTime?   @db.Timestamptz(3)
+  confirmedAt                       DateTime?   @db.Timestamptz(3)
+  cancelledAt                       DateTime?   @db.Timestamptz(3)
+  rejectedAt                        DateTime?   @db.Timestamptz(3)
+  rejectionReason                   String?
+  kitchenStartedAt                  DateTime?   @db.Timestamptz(3)
+  kitchenReadyAt                    DateTime?   @db.Timestamptz(3)
+  deliveryDropId                    String?     @db.Uuid
+  createdByStaffUserId              String      @db.Uuid
+  createdAt                         DateTime    @default(now()) @db.Timestamptz(3)
+  updatedAt                         DateTime    @updatedAt @db.Timestamptz(3)
+
+  employee        Employee        @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  company         Company         @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  deliveryAddress CompanyAddress? @relation("OrderDeliveryAddress", fields: [deliveryAddressId], references: [id], onDelete: SetNull)
+  packagingType   PackagingType   @relation(fields: [packagingTypeId], references: [id], onDelete: Restrict)
+  deliveryDrop    DeliveryDrop?   @relation(fields: [deliveryDropId], references: [id], onDelete: Restrict)
+  createdBy       StaffUser       @relation("OrderCreatedBy", fields: [createdByStaffUserId], references: [id], onDelete: Restrict)
+  lines           OrderLine[]
+  events          OrderEvent[]
+  prepUnits       PrepUnit[]
+  invoiceOrder    InvoiceOrder?
+
+  @@index([deliveryDate, status])
+  @@index([status, deliveryDate])
+  @@index([companyId, status, deliveryDate])
+  @@index([companyId, billableTotalCents])
+  @@index([employeeId, deliveryDate])
+  @@index([deliveryAt])
+  @@index([deliveryDropId])
+  @@index([createdByStaffUserId])
+}
+
+model OrderLine {
+  id                 String   @id @default(uuid()) @db.Uuid
+  orderId            String   @db.Uuid
+  dishId             String   @db.Uuid
+  dishNameSnapshot   String
+  dishSkuSnapshot    String
+  quantity           Int
+  dishUnitPriceCents Int
+  lineTotalCents     Int
+  createdAt          DateTime @default(now()) @db.Timestamptz(3)
+
+  order        Order              @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  dish         Dish               @relation(fields: [dishId], references: [id], onDelete: Restrict)
+  combinations OrderCombination[]
+
+  @@index([orderId])
+  @@index([dishId])
+}
+
+model OrderCombination {
+  id             String @id @default(uuid()) @db.Uuid
+  orderLineId    String @db.Uuid
+  quantity       Int
+  unitPriceCents Int
+  totalCents     Int
+
+  orderLine OrderLine                @relation(fields: [orderLineId], references: [id], onDelete: Restrict)
+  options   OrderCombinationOption[]
+  prepUnit  PrepUnit?
+
+  @@index([orderLineId])
+}
+
+model OrderCombinationOption {
+  id                      String  @id @default(uuid()) @db.Uuid
+  combinationId           String  @db.Uuid
+  optionGroupId           String  @db.Uuid
+  optionId                String  @db.Uuid
+  portionSizeId           String? @db.Uuid
+  optionGroupNameSnapshot String
+  optionNameSnapshot      String
+  portionNameSnapshot     String?
+  optionPriceCents        Int
+  portionExtraCents       Int
+
+  combination OrderCombination @relation(fields: [combinationId], references: [id], onDelete: Restrict)
+  optionGroup OptionGroup      @relation(fields: [optionGroupId], references: [id], onDelete: Restrict)
+  option      Option           @relation(fields: [optionId], references: [id], onDelete: Restrict)
+  portionSize PortionSize?     @relation(fields: [portionSizeId], references: [id], onDelete: Restrict)
+
+  @@unique([combinationId, optionGroupId])
+  @@index([optionGroupId])
+  @@index([optionId])
+  @@index([portionSizeId])
+}
+
+model OrderEvent {
+  id               String         @id @default(uuid()) @db.Uuid
+  orderId          String         @db.Uuid
+  type             OrderEventType
+  actorStaffUserId String?        @db.Uuid
+  occurredAt       DateTime       @default(now()) @db.Timestamptz(3)
+  message          String?
+  metadata         Json?
+
+  order Order      @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  actor StaffUser? @relation("OrderEventActor", fields: [actorStaffUserId], references: [id], onDelete: Restrict)
+
+  @@index([orderId, occurredAt])
+  @@index([actorStaffUserId])
+}
+
+model PrepUnit {
+  id                   String    @id @default(uuid()) @db.Uuid
+  orderId              String    @db.Uuid
+  combinationId        String    @unique @db.Uuid
+  stationId            String?   @db.Uuid
+  stationNameSnapshot  String
+  quantity             Int
+  startedAt            DateTime? @db.Timestamptz(3)
+  startedByStaffUserId String?   @db.Uuid
+  doneAt               DateTime? @db.Timestamptz(3)
+  doneByStaffUserId    String?   @db.Uuid
+  createdAt            DateTime  @default(now()) @db.Timestamptz(3)
+
+  order       Order            @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  combination OrderCombination @relation(fields: [combinationId], references: [id], onDelete: Restrict)
+  station     KitchenStation?  @relation(fields: [stationId], references: [id], onDelete: SetNull)
+  startedBy   StaffUser?       @relation("PrepUnitStartedBy", fields: [startedByStaffUserId], references: [id], onDelete: Restrict)
+  doneBy      StaffUser?       @relation("PrepUnitDoneBy", fields: [doneByStaffUserId], references: [id], onDelete: Restrict)
+
+  @@index([orderId, doneAt])
+  @@index([stationId, doneAt])
+  @@index([startedByStaffUserId])
+  @@index([doneByStaffUserId])
+}
+
+model DeliveryDrop {
+  id                        String             @id @default(uuid()) @db.Uuid
+  companyId                 String             @db.Uuid
+  scheduledDeliveryAt       DateTime           @db.Timestamptz(3)
+  addressLabelSnapshot      String
+  addressLine1Snapshot      String
+  addressLine2Snapshot      String?
+  addressCitySnapshot       String
+  addressRegionSnapshot     String?
+  addressPostalCodeSnapshot String?
+  addressCountrySnapshot    String
+  status                    DeliveryDropStatus
+  driverStaffUserId         String?            @db.Uuid
+  dispatchReadyAt           DateTime?          @db.Timestamptz(3)
+  outForDeliveryAt          DateTime?          @db.Timestamptz(3)
+  deliveredAt               DateTime?          @db.Timestamptz(3)
+  deliveryNote              String?
+  photoUrl                  String?
+  createdAt                 DateTime           @default(now()) @db.Timestamptz(3)
+  updatedAt                 DateTime           @updatedAt @db.Timestamptz(3)
+
+  company Company    @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  driver  StaffUser? @relation("DeliveryDropDriver", fields: [driverStaffUserId], references: [id], onDelete: Restrict)
+  orders  Order[]
+
+  @@index([scheduledDeliveryAt, status])
+  @@index([driverStaffUserId, scheduledDeliveryAt])
+  @@index([companyId, scheduledDeliveryAt])
+}
+
+model Invoice {
+  id                   String        @id @default(uuid()) @db.Uuid
+  invoiceNumber        String        @unique
+  companyId            String        @db.Uuid
+  status               InvoiceStatus @default(UNPAID)
+  totalCents           Int
+  createdByStaffUserId String        @db.Uuid
+  createdAt            DateTime      @default(now()) @db.Timestamptz(3)
+  paidAt               DateTime?     @db.Timestamptz(3)
+  paidByStaffUserId    String?       @db.Uuid
+
+  company   Company        @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  createdBy StaffUser      @relation("InvoiceCreatedBy", fields: [createdByStaffUserId], references: [id], onDelete: Restrict)
+  paidBy    StaffUser?     @relation("InvoicePaidBy", fields: [paidByStaffUserId], references: [id], onDelete: Restrict)
+  orders    InvoiceOrder[]
+
+  @@index([companyId, status])
+  @@index([createdAt])
+  @@index([createdByStaffUserId])
+  @@index([paidByStaffUserId])
+}
+
+model InvoiceOrder {
+  invoiceId   String @db.Uuid
+  orderId     String @unique @db.Uuid
+  amountCents Int
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+  order   Order   @relation(fields: [orderId], references: [id], onDelete: Restrict)
+
+  @@id([invoiceId, orderId])
+}
+
+model PlatformSettings {
+  id                        Int      @id @default(1)
+  businessTimezone          String   @default("Asia/Kolkata")
+  cutoffTime                DateTime @db.Time(0)
+  cutoffWorkingDayCount     Int
+  kitchenReadyBufferMinutes Int      @default(30)
+  atRiskWindowMinutes       Int
+  updatedAt                 DateTime @updatedAt @db.Timestamptz(3)
+}
+
+model KitchenWorkingDay {
+  dayOfWeek DayOfWeek @id
+}
+
+model KitchenHoliday {
+  id   String   @id @default(uuid()) @db.Uuid
+  date DateTime @unique @db.Date
+  name String?
 }
