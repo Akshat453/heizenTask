@@ -17,6 +17,9 @@ import { ReferenceDataModule } from './reference-data/reference-data.module.js';
 import { SettingsModule } from './settings/settings.module.js';
 import { StaffModule } from './staff/staff.module.js';
 import { OrdersModule } from './orders/orders.module.js';
+import { KitchenModule } from './kitchen/kitchen.module.js';
+import { DispatchModule } from './dispatch/dispatch.module.js';
+import { DriverModule } from './driver/driver.module.js';
 
 @Module({
   imports: [
@@ -37,6 +40,9 @@ import { OrdersModule } from './orders/orders.module.js';
     SettingsModule,
     BusinessTimeModule,
     OrdersModule,
+    KitchenModule,
+    DispatchModule,
+    DriverModule,
   ],
   providers: [
     {

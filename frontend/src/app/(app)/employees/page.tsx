@@ -127,7 +127,7 @@ export default function EmployeesPage() {
 
               <div className="space-y-2">
                 <Label>Company</Label>
-                <Select value={form.watch("companyId")} onValueChange={(val) => form.setValue("companyId", val)}>
+                <Select value={form.watch("companyId") || ""} onValueChange={(val) => form.setValue("companyId", val || "")}>
                   <SelectTrigger>
                     <SelectValue placeholder="Select a company" />
                   </SelectTrigger>

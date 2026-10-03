@@ -61,7 +61,7 @@ export function CompanyForm({ initialData }: { initialData?: any }) {
   }, []);
 
   const form = useForm<FormValues>({
-    resolver: zodResolver(schema),
+    resolver: zodResolver(schema) as any,
     defaultValues: initialData || {
       name: "", billingContactName: "", billingContactEmail: "", billingContactPhone: "",
       defaultDeliveryTime: "12:00", deliveryLeadMinutes: 60, defaultPackagingTypeId: "",
@@ -106,7 +106,7 @@ export function CompanyForm({ initialData }: { initialData?: any }) {
   };
 
   return (
-    <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8 max-w-4xl bg-white p-6 rounded-lg border">
+    <form onSubmit={form.handleSubmit(onSubmit as any)} className="space-y-8 max-w-4xl bg-white p-6 rounded-lg border">
       <section>
         <h2 className="text-lg font-medium border-b pb-2 mb-4">Basic Details</h2>
         <div className="grid grid-cols-2 gap-4">
@@ -124,7 +124,7 @@ export function CompanyForm({ initialData }: { initialData?: any }) {
           <div className="space-y-2"><Label>Lead Time (mins)</Label><Input type="number" {...form.register("deliveryLeadMinutes", { valueAsNumber: true })} /></div>
           <div className="space-y-2">
             <Label>Default Packaging</Label>
-            <Select value={form.watch("defaultPackagingTypeId")} onValueChange={(v) => form.setValue("defaultPackagingTypeId", v)}>
+            <Select value={form.watch("defaultPackagingTypeId") || ""} onValueChange={(v) => form.setValue("defaultPackagingTypeId", v || "")}>
               <SelectTrigger><SelectValue placeholder="Select packaging" /></SelectTrigger>
               <SelectContent>{pkgTypes.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}</SelectContent>
             </Select>

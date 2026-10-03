@@ -22,6 +22,8 @@ const navigation: NavigationItem[] = [
   { label: "Employees", href: "/employees", requiredPermissions: ["employees.read"] },
   { label: "Ref. Data", href: "/reference-data", requiredPermissions: ["catalogue.manage"] },
   { label: "Settings", href: "/settings", requiredPermissions: ["settings.read"] },
+  { label: "Dispatch", href: "/dispatch", requiredPermissions: ["dispatch.read"] },
+  { label: "Driver Route", href: "/driver", requiredPermissions: ["driver.own_drops.read"] },
 ];
 
 export function ProtectedShell({ children }: { children: ReactNode }) {

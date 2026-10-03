@@ -5,16 +5,21 @@ import { PrismaService } from '../../prisma/prisma.service.js';
 import { OrderCreationService } from './order-creation.service.js';
 import { BusinessTimeService } from '../../business-time/business-time.service.js';
 import { OrderStatus } from '../../generated/prisma/enums.js';
+import { DeliveryGroupingService } from '../../dispatch/services/delivery-grouping.service.js';
 
 describe('OrderLifecycleService', () => {
   let service: OrderLifecycleService;
   let prisma: any;
   let creation: any;
   let businessTime: any;
+  let deliveryGrouping: any;
 
   beforeEach(async () => {
     prisma = {
-      order: { findUnique: vi.fn(), update: vi.fn() },
+      $transaction: vi.fn(async (cb) => cb(prisma)),
+      $executeRaw: vi.fn(),
+      order: { findUnique: vi.fn(), update: vi.fn(), count: vi.fn() },
+      deliveryDrop: { delete: vi.fn() },
     };
 
     creation = {
@@ -24,6 +29,11 @@ describe('OrderLifecycleService', () => {
     businessTime = {
       isDeliveryDateOpen: vi.fn(),
     };
+    
+    deliveryGrouping = {
+      getCanonicalKey: vi.fn().mockReturnValue('mock-key'),
+      reconcileGroup: vi.fn(),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -31,6 +41,7 @@ describe('OrderLifecycleService', () => {
         { provide: PrismaService, useValue: prisma },
         { provide: OrderCreationService, useValue: creation },
         { provide: BusinessTimeService, useValue: businessTime },
+        { provide: DeliveryGroupingService, useValue: deliveryGrouping },
       ],
     }).compile();
 

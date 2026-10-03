@@ -1,9 +1,10 @@
 import { Injectable, NotFoundException, ConflictException, ForbiddenException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service.js';
 import { OrderCreationService } from './order-creation.service.js';
-import { OrderStatus, OrderEventType } from '../../generated/prisma/enums.js';
+import { OrderStatus, OrderEventType, DeliveryDropStatus } from '../../generated/prisma/enums.js';
 import { BusinessTimeService } from '../../business-time/business-time.service.js';
 import { RejectOrderDto, OverrideDeliveryDetailsDto } from '../dto/order.dto.js';
+import { DeliveryGroupingService } from '../../dispatch/services/delivery-grouping.service.js';
 
 @Injectable()
 export class OrderLifecycleService {
@@ -11,6 +12,7 @@ export class OrderLifecycleService {
     private readonly prisma: PrismaService,
     private readonly creation: OrderCreationService,
     private readonly businessTime: BusinessTimeService,
+    private readonly deliveryGrouping: DeliveryGroupingService,
   ) {}
 
   async place(orderId: string, actorStaffUserId: string) {
@@ -88,37 +90,76 @@ export class OrderLifecycleService {
   }
 
   async overrideDelivery(orderId: string, dto: OverrideDeliveryDetailsDto, actorStaffUserId: string) {
-    const order = await this.prisma.order.findUnique({ where: { id: orderId } });
-    if (!order) throw new NotFoundException('Order not found');
+    await this.prisma.$transaction(async (tx) => {
+      const order = await tx.order.findUnique({ 
+        where: { id: orderId },
+        include: { deliveryDrop: true }
+      });
+      if (!order) throw new NotFoundException('Order not found');
 
-    // "Admin delivery details override, records event, doesn't touch money."
-    const updateData: any = {};
-    if (dto.deliveryAddressId) {
-       const addr = await this.prisma.companyAddress.findUnique({ where: { id: dto.deliveryAddressId } });
-       if (!addr) throw new BadRequestException('Invalid address');
-       updateData.deliveryAddressId = addr.id;
-       updateData.deliveryAddressLabelSnapshot = addr.label;
-       updateData.deliveryAddressLine1Snapshot = addr.line1;
-       updateData.deliveryAddressLine2Snapshot = addr.line2;
-       updateData.deliveryAddressCitySnapshot = addr.city;
-       updateData.deliveryAddressRegionSnapshot = addr.region;
-       updateData.deliveryAddressPostalCodeSnapshot = addr.postalCode;
-       updateData.deliveryAddressCountrySnapshot = addr.country;
-    }
-    
-    if (dto.packagingTypeId) {
-       const pkg = await this.prisma.packagingType.findUnique({ where: { id: dto.packagingTypeId } });
-       if (!pkg) throw new BadRequestException('Invalid packaging');
-       updateData.packagingTypeId = pkg.id;
-       updateData.packagingNameSnapshot = pkg.name;
-    }
+      // Reject address/time changes if attached to an immutable drop
+      const isImmutableDrop = order.deliveryDrop && 
+        (order.deliveryDrop.status === DeliveryDropStatus.OUT_FOR_DELIVERY || order.deliveryDrop.status === DeliveryDropStatus.DELIVERED);
 
-    if (dto.deliveryAt) {
-       updateData.deliveryAt = new Date(dto.deliveryAt);
-    }
+      if (isImmutableDrop && (dto.deliveryAddressId || dto.deliveryAt)) {
+        throw new ConflictException(`Cannot change address or time for order in an immutable ${order.deliveryDrop!.status} drop`);
+      }
 
-    if (Object.keys(updateData).length > 0) {
-      await this.prisma.order.update({
+      // Determine OLD canonical key
+      const oldCanonicalKey = this.deliveryGrouping.getCanonicalKey(order as any);
+      let newCanonicalKey = oldCanonicalKey;
+      let hasGroupingChange = false;
+
+      const updateData: any = {};
+      if (dto.deliveryAddressId) {
+        const addr = await tx.companyAddress.findUnique({ where: { id: dto.deliveryAddressId } });
+        if (!addr) throw new BadRequestException('Invalid address');
+        updateData.deliveryAddressId = addr.id;
+        updateData.deliveryAddressLabelSnapshot = addr.label;
+        updateData.deliveryAddressLine1Snapshot = addr.line1;
+        updateData.deliveryAddressLine2Snapshot = addr.line2;
+        updateData.deliveryAddressCitySnapshot = addr.city;
+        updateData.deliveryAddressRegionSnapshot = addr.region;
+        updateData.deliveryAddressPostalCodeSnapshot = addr.postalCode;
+        updateData.deliveryAddressCountrySnapshot = addr.country;
+        hasGroupingChange = true;
+      }
+      
+      if (dto.packagingTypeId) {
+        const pkg = await tx.packagingType.findUnique({ where: { id: dto.packagingTypeId } });
+        if (!pkg) throw new BadRequestException('Invalid packaging');
+        updateData.packagingTypeId = pkg.id;
+        updateData.packagingNameSnapshot = pkg.name;
+      }
+
+      if (dto.deliveryAt) {
+        updateData.deliveryAt = new Date(dto.deliveryAt);
+        hasGroupingChange = true;
+      }
+
+      if (Object.keys(updateData).length === 0) return; // Nothing to do
+
+      if (hasGroupingChange) {
+        // Determine NEW canonical key
+        const simulatedOrder = { ...order, ...updateData };
+        newCanonicalKey = this.deliveryGrouping.getCanonicalKey(simulatedOrder as any);
+
+        if (oldCanonicalKey !== newCanonicalKey) {
+          // Acquire locks in deterministic sorted order
+          const keysToLock = [oldCanonicalKey, newCanonicalKey].sort();
+          for (const key of keysToLock) {
+            await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`;
+          }
+
+          // Detach from current DISPATCH_READY drop if it exists
+          if (order.deliveryDropId && !isImmutableDrop) {
+            updateData.deliveryDropId = null;
+          }
+        }
+      }
+
+      // Perform the update
+      await tx.order.update({
         where: { id: orderId },
         data: {
           ...updateData,
@@ -127,6 +168,21 @@ export class OrderLifecycleService {
           }
         }
       });
-    }
+
+      // Reconcile drops if grouping changed
+      if (hasGroupingChange && oldCanonicalKey !== newCanonicalKey) {
+        await this.deliveryGrouping.reconcileGroup(oldCanonicalKey, tx);
+        const updatedOrder = await tx.order.findUnique({ where: { id: orderId } });
+        await this.deliveryGrouping.reconcileGroup(newCanonicalKey, tx, updatedOrder);
+        
+        // Cleanup old drop if it became empty and is DISPATCH_READY
+        if (order.deliveryDropId && !isImmutableDrop) {
+          const remaining = await tx.order.count({ where: { deliveryDropId: order.deliveryDropId } });
+          if (remaining === 0) {
+            await tx.deliveryDrop.delete({ where: { id: order.deliveryDropId } });
+          }
+        }
+      }
+    });
   }
 }
