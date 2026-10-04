@@ -278,7 +278,15 @@ describe('Dashboard figures (PostgreSQL)', { timeout: 600_000 }, () => {
         drop.scheduledDeliveryAt.getTime() -
           order.deliveryLeadMinutesSnapshot * 60_000,
       );
-      expect(drop).not.toHaveProperty('orders');
+      // Orders are exposed as public summaries only (no lead minutes or lines).
+      expect(drop.orders).toHaveLength(1);
+      expect(Object.keys(drop.orders[0]!).sort()).toEqual([
+        'employeeName',
+        'id',
+        'meals',
+        'orderNumber',
+        'packagingName',
+      ]);
     }
   });
 

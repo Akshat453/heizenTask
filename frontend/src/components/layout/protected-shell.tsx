@@ -9,7 +9,8 @@ import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { loginUrl } from "@/lib/query-client";
 import { AppSidebar } from "./app-sidebar";
 import { AppTopBar } from "./app-top-bar";
-import { isNavItemAllowed, navItemForPath } from "./navigation";
+import { DriverTopBar } from "./driver-top-bar";
+import { isNavItemAllowed, isPhoneOnlyUser, navItemForPath } from "./navigation";
 
 type ProtectedShellProps = { children: ReactNode; defaultSidebarOpen: boolean };
 
@@ -53,12 +54,21 @@ export function ProtectedShell({ children, defaultSidebarOpen }: ProtectedShellP
   const navItem = navItemForPath(pathname);
   const allowed = !navItem || isNavItemAllowed(navItem, can);
 
+  const content = allowed ? children : <AccessDenied className="py-24" />;
+  if (isPhoneOnlyUser(can))
+    return (
+      <div className="flex min-h-screen flex-col bg-background">
+        <DriverTopBar />
+        <div className="flex-1">{content}</div>
+      </div>
+    );
+
   return (
     <SidebarProvider defaultOpen={defaultSidebarOpen}>
       <AppSidebar />
       <SidebarInset className="min-w-0">
         <AppTopBar />
-        <div className="flex-1">{allowed ? children : <AccessDenied className="py-24" />}</div>
+        <div className="flex-1">{content}</div>
       </SidebarInset>
     </SidebarProvider>
   );

@@ -144,6 +144,11 @@ export class OrderQueryDto {
   @IsOptional()
   @IsString()
   search?: string;
+
+  /** Orders attached to one Delivery Drop. */
+  @IsOptional()
+  @IsUUID('all')
+  deliveryDropId?: string;
 }
 
 export class OverrideDeliveryDetailsDto {

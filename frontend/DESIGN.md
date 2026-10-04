@@ -131,6 +131,30 @@ The backend enum is always `OUT_FOR_DELIVERY`; only the label reads "Out for del
 - Start/Done are optimistic (the card moves at once) and roll back on error. A 409 shows "Already updated by someone else" and refetches. Actions need `kitchen.update`; force complete needs `kitchen.force_complete`; anyone else sees the board read-only.
 - Wall mode (`?wall=1`): full-screen overlay without sidebar and top bar, 18px base size (card type scales in `em`), auto-refresh continues, Esc exits.
 
-## 11. Copy
+## 11. Dispatch and driver conventions
+
+- **Drag and drop as a shortcut; buttons stay primary.** Dragging a "Ready to leave" card onto "Out for delivery" calls the same server-validated transition as the "Mark out for delivery" button, which remains the primary, accessible path. Only ready cards are draggable (via a grip handle), only "Out for delivery" accepts a drop, and "Delivered" is never a target (only the driver delivers). There is no reordering inside a column; columns stay sorted by delivery time.
+  - While dragging, the target column gets a primary tint and outline; the other columns are dimmed with a not-allowed cursor. Auto-refresh pauses until the drag ends.
+  - Pointer, touch (150 ms press) and keyboard: Space picks up, the arrow keys jump between Ready to leave and Out for delivery, Space drops, Esc cancels. Screen-reader announcements describe each step.
+  - A blocked move (no driver) snaps back with the same reason as the disabled button: "Assign a driver first". A valid move is optimistic and rolls back on error; a 409 shows "Someone else already updated this. Showing the latest." and refetches.
+  - Users without `dispatch.update` get no handles and no buttons (read-only board). The kitchen board never uses drag and drop.
+- **Kitchen readiness:** a drop exists only once all of its orders are kitchen-ready, so drop cards never show "x of y kitchen-ready" or "still cooking". "Waiting on kitchen" is a column of individual confirmed orders without a drop, subtitled "Orders still being cooked. They become a drop when ready."
+- **Search and driver filter** are sent to `GET /dispatch/drops` (`search`, `driverId` incl. `none`), debounced 300 ms, URL-synced and applied before pagination. The summary strip counts the whole day (unfiltered).
+- **Drop contents:** cards and the table show "4 orders · 23 meals"; the drop panel lists the drop's own `orders` and packaging counts from the API.
+- **Leave-by countdown:** display-only arithmetic on the API's `plannedDispatchReadyAt` against the server-adjusted clock ("Leave by 11:00 · in 18 min", warning once passed). Nothing is reclassified.
+- **Driver picker** assigns on change ("Driver assigned") and tags the company default driver "Default". It lists `GET /staff/drivers` (by permission, so admins can appear).
+- **Proof photos:** "View photo" opens a tab synchronously, then fetches the short-lived signed URL; the URL is never stored.
+- **Driver route:** phone first (360-480px), no sidebar for driver-only roles, 56px sticky "Mark delivered" with safe-area padding, every tap target at least 44px. Stops show packaging ("18 boxed · 5 eco-tray") and meals. Note and photo are optional; the browser checks JPEG/PNG/WebP and 5 MB for fast feedback and the server re-validates. A failed delivery keeps the note and photo for Retry.
+
+## 12. Catalogue, menu and pricing conventions
+
+- **Form pages** (dish, option): one scrolling form with `SectionIndex` on the left (lg+) and `StickySaveBar` (saffron edge) while dirty; `useUnsavedChangesGuard` warns before leaving. Read-only roles see the same form disabled with no actions.
+- **Money and ratio inputs** are parsed as strings (`lib/decimal-input.ts`): "105.50" -> 10550 cents, "2.4" -> 24000 bps, never through floats. Display still uses `formatMoney`.
+- **Reordering** uses keyboard-accessible up/down buttons (`ReorderButtons`), no drag library. Menu items save with one `PUT /menu/categories/:id/items`.
+- **Company hiding** is edited from the menu with `HidingPicker`; it updates each affected company's `hiddenCategoryIds` / `hiddenDishIds` through `PATCH /companies/:id` (needs `companies.manage`).
+- **Tier editor** is spreadsheet-like: override cells are inputs; Up/Down/Enter move between cells, Tab moves naturally, Esc reverts a cell, an empty cell clears the override. Dirty cells use `bg-saffron-soft`. One `PATCH /price-tiers/:id/prices` saves every change; row errors come back by `dishOverrides.N` / `optionOverrides.N` path. Price source badges: Override (progress), Derived (neutral), Missing (danger), never primary, which stays for actions.
+- **Reference data** tables edit names in place (blur or Enter saves, Esc reverts) and switch Active; nothing is hard-deleted.
+
+## 13. Copy
 
 Buttons say exactly what happens ("Place order", "Mark out for delivery", "Create invoice"). Toasts use the past tense. Confirm dialogs state the consequence in plain words. Use staff vocabulary: order, drop, prep unit, cut-off, tier, station, invoice.

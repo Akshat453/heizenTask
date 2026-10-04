@@ -16,6 +16,7 @@ export type Dish = {
   allergens: { allergen: NamedReference }[];
   dietaryTags: { dietaryTag: NamedReference }[];
   optionGroups: OptionGroup[];
+  updatedAt?: string;
 };
 
 export type OptionGroup = {
@@ -24,21 +25,34 @@ export type OptionGroup = {
   portions: { portionSizeId: string; extraChargeCents: number; displayOrder: number; portionSize: OrderedReference }[];
 };
 
+/** Dish list rows: no option groups (they come with GET /dishes/:id). */
+export type DishListItem = Omit<Dish, "optionGroups">;
+
 export type Option = {
-  id: string; name: string; costCents: number; isActive: boolean;
+  id: string; name: string; costCents: number; isActive: boolean; updatedAt?: string;
   allergens: { allergen: NamedReference }[];
   dietaryTags: { dietaryTag: NamedReference }[];
 };
 
+/** List rows (GET /menu/categories) carry only the item count. */
+export type MenuCategorySummary = {
+  id: string; name: string; slug: string; displayOrder: number;
+  isActive: boolean; isSecret: boolean;
+  _count: { items: number };
+};
+
+/** GET /menu/categories/:id */
 export type MenuCategory = {
   id: string; name: string; slug: string; displayOrder: number;
   isActive: boolean; isSecret: boolean;
-  items: { dishId: string; displayOrder: number; dish: Pick<Dish, "id" | "name" | "sku" | "isActive"> }[];
+  items: { dishId: string; displayOrder: number; isActive: boolean; dish: Pick<Dish, "id" | "name" | "sku" | "isActive"> }[];
   _count?: { items: number };
 };
 
+export type PriceTierStrategy = "MANUAL" | "COST_MULTIPLIER" | "TIER_PERCENTAGE";
+
 export type PriceTier = {
-  id: string; name: string; strategy: string; isActive: boolean; isDefault: boolean;
+  id: string; name: string; strategy: PriceTierStrategy; isActive: boolean; isDefault: boolean;
   sourceTierId: string | null; costMultiplierBps: number | null; sourceAdjustmentBps: number | null;
 };
 
@@ -118,13 +132,17 @@ export type DeliveryDrop = {
   _count: { orders: number };
 };
 
-export type DispatchDrop = DeliveryDrop & {
+/** Orders, meals and packaging loaded with each drop (dispatch list and driver route). */
+export type DropOrderSummary = { id: string; orderNumber: string; employeeName: string; packagingName: string; meals: number };
+export type DropContents = { orders: DropOrderSummary[]; meals: number; packaging: { name: string; count: number }[] };
+
+export type DispatchDrop = DeliveryDrop & DropContents & {
   company: { name: string }; driver: { name: string } | null;
   /** scheduledDeliveryAt − the longest lead snapshotted on the drop's orders (computed by the API). */
   plannedDispatchReadyAt: string | null;
 };
 
-export type DriverDrop = DeliveryDrop & { company: { name: string; driverInstructions: string | null } };
+export type DriverDrop = DeliveryDrop & DropContents & { company: { name: string; driverInstructions: string | null } };
 
 export type InvoiceStatus = "UNPAID" | "PAID";
 
@@ -201,6 +219,10 @@ export type KitchenBoardUnit = {
 export type OrderListItem = {
   id: string; orderNumber: string; status: OrderStatus;
   deliveryDate: string; deliveryAt: string;
+  /** Scalar Order fields also present on list rows. */
+  deliveryDropId: string | null; kitchenReadyAt: string | null; kitchenStartedAt: string | null;
+  deliveryAddressId: string | null; deliveryAddressLabelSnapshot: string; packagingNameSnapshot: string;
+  companyId: string; employeeId: string;
   totalCents: number; billableTotalCents: number | null;
   employee: { name: string }; company: { name: string };
   invoiceOrder: { invoiceId: string; amountCents: number } | null;
@@ -211,6 +233,7 @@ export type OrderListQuery = {
   deliveryDateFrom?: string; deliveryDateTo?: string;
   /** Only `true` is sent: the API's boolean parsing turns "false" into true. */
   invoiced?: true;
+  deliveryDropId?: string;
 };
 
 /** GET /business-time/cutoff/:date */
@@ -314,8 +337,46 @@ export type CompanyDetail = Company & {
   workingDays: { dayOfWeek: DayOfWeek }[];
   defaultPackagingType: OrderedReference;
   defaultDriver: { id: string; name: string; email: string } | null;
+  hiddenCategories: { categoryId: string; category: { id: string; name: string } }[];
+  hiddenDishes: { dishId: string; dish: { id: string; name: string; sku: string } }[];
 };
 
 export function isFieldChange(value: unknown): value is FieldChange {
   return typeof value === "object" && value !== null && "from" in value && "to" in value;
 }
+
+// ─── Staff ───────────────────────────────────────────────────────────────────
+
+export type DriverOption = { id: string; name: string; email: string };
+export type ReconcileResult = { processedGroups: number; unattachedReadyOrdersFound: number; failures: { key: string; message: string }[] };
+
+export type DropListQuery = { date: string; search?: string; driverId?: string; page?: number; pageSize?: number };
+
+// ─── Catalogue / pricing writes ──────────────────────────────────────────────
+
+export type OptionGroupInput = {
+  id?: string; name: string; isRequired: boolean; usesPortions: boolean; displayOrder: number;
+  options: { optionId: string; displayOrder: number }[];
+  portions: { portionSizeId: string; extraChargeCents: number; displayOrder: number }[];
+};
+
+export type DishWriteInput = {
+  name: string; description: string; imageUrl: string; sku: string; temperature: "HOT" | "COLD";
+  costCents: number; minimumOrderQuantity?: number | null; stationId?: string | null; isActive?: boolean;
+  allergenIds: string[]; dietaryTagIds: string[]; optionGroups: OptionGroupInput[];
+};
+
+export type OptionWriteInput = { name: string; costCents: number; isActive?: boolean; allergenIds: string[]; dietaryTagIds: string[] };
+
+export type PriceTierWriteInput = {
+  name: string; strategy: PriceTierStrategy; isDefault?: boolean; isActive?: boolean;
+  sourceTierId?: string | null; costMultiplierBps?: number | null; sourceAdjustmentBps?: number | null;
+};
+
+export type PriceSource = "OVERRIDE" | "MANUAL" | "COST_MULTIPLIER" | "TIER_PERCENTAGE" | "MISSING" | string;
+export type TierEditorRow = {
+  id: string; name: string; costCents: number; isActive: boolean;
+  overridePriceCents: number | null; priceCents: number | null; source: PriceSource; sku?: string;
+};
+export type TierEditor = { tier: PriceTier; dishes: (TierEditorRow & { sku: string })[]; options: TierEditorRow[] };
+export type PriceOverride = { itemId: string; priceCents: number | null };

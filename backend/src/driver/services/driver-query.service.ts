@@ -2,6 +2,10 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service.js';
 import { BusinessTimeService } from '../../business-time/business-time.service.js';
 import { withOnTime } from '../../dispatch/drop-timing.js';
+import {
+  dropOrdersSelect,
+  summarizeDropOrders,
+} from '../../dispatch/drop-orders.js';
 
 @Injectable()
 export class DriverQueryService {
@@ -28,10 +32,17 @@ export class DriverQueryService {
       include: {
         company: { select: { name: true, driverInstructions: true } },
         _count: { select: { orders: true } },
+        orders: { select: dropOrdersSelect },
       },
       orderBy: [{ scheduledDeliveryAt: 'asc' }, { id: 'asc' }],
     });
 
-    return { businessDate, data: drops.map(withOnTime) };
+    return {
+      businessDate,
+      data: drops.map(({ orders, ...drop }) => ({
+        ...withOnTime(drop),
+        ...summarizeDropOrders(orders),
+      })),
+    };
   }
 }

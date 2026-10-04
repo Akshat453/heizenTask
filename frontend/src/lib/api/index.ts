@@ -6,6 +6,8 @@ import type {
   Dish,
   Option,
   MenuCategory,
+  MenuCategorySummary,
+  DishListItem,
   PriceTier,
   Company,
   CompanyWriteInput,
@@ -35,6 +37,14 @@ import type {
   OverrideDeliveryInput,
   MenuPreview,
   CompanyDetail,
+  DriverOption,
+  ReconcileResult,
+  DropListQuery,
+  DishWriteInput,
+  OptionWriteInput,
+  PriceTierWriteInput,
+  TierEditor,
+  PriceOverride,
 } from "./types";
 
 export * from "./types";
@@ -81,26 +91,33 @@ export const referenceDataApi = {
 // ─── Catalogue ──────────────────────────────────────────────────────────────
 
 export const catalogueApi = {
-  listDishes: (params?: Record<string, string | number | boolean>) => {
-    const qs = new URLSearchParams();
-    if (params) Object.entries(params).forEach(([k, v]) => qs.set(k, String(v)));
-    return apiRequest<PaginatedResponse<Dish>>(`/dishes?${qs}`);
-  },
+  listDishes: (params: { page?: number; pageSize?: number; search?: string; isActive?: true; temperature?: "HOT" | "COLD"; stationId?: string } = {}) =>
+    apiRequest<PaginatedResponse<DishListItem>>(`/dishes?${toQuery(params)}`),
   getDish: (id: string) => apiRequest<Dish>(`/dishes/${id}`),
+  createDish: (body: DishWriteInput) => apiRequest<Dish>("/dishes", { method: "POST", body: JSON.stringify(body) }),
+  updateDish: (id: string, body: Partial<DishWriteInput>) => apiRequest<Dish>(`/dishes/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   deactivateDish: (id: string) => apiRequest<Dish>(`/dishes/${id}/deactivate`, { method: "POST" }),
+  /** Reactivation is a normal update (isActive is part of the dish DTO). */
+  reactivateDish: (id: string) => apiRequest<Dish>(`/dishes/${id}`, { method: "PATCH", body: JSON.stringify({ isActive: true }) }),
   listOptions: () => listAll<Option>("/options"),
+  searchOptions: (params: { page?: number; pageSize?: number; search?: string } = {}) =>
+    apiRequest<PaginatedResponse<Option>>(`/options?${toQuery(params)}`),
+  getOption: (id: string) => apiRequest<Option>(`/options/${id}`),
+  createOption: (body: OptionWriteInput) => apiRequest<Option>("/options", { method: "POST", body: JSON.stringify(body) }),
+  updateOption: (id: string, body: Partial<OptionWriteInput>) => apiRequest<Option>(`/options/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
 };
 
 // ─── Menu ───────────────────────────────────────────────────────────────────
 
 export const menuApi = {
-  listCategories: () => listAll<MenuCategory>("/menu/categories"),
+  listCategories: () => listAll<MenuCategorySummary>("/menu/categories"),
   getCategory: (id: string) => apiRequest<MenuCategory>(`/menu/categories/${id}`),
   createCategory: (body: { name: string; slug: string; displayOrder: number; isActive?: boolean; isSecret?: boolean }) =>
     apiRequest<MenuCategory>("/menu/categories", { method: "POST", body: JSON.stringify(body) }),
   updateCategory: (id: string, body: Partial<{ name: string; slug: string; displayOrder: number; isActive: boolean; isSecret: boolean }>) =>
     apiRequest<MenuCategory>(`/menu/categories/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
-  replaceItems: (categoryId: string, items: { dishId: string; displayOrder: number }[]) =>
+  /** Replaces the whole ordered item list in one request. */
+  replaceItems: (categoryId: string, items: { dishId: string; displayOrder: number; isActive: boolean }[]) =>
     apiRequest<MenuCategory>(`/menu/categories/${categoryId}/items`, { method: "PUT", body: JSON.stringify({ items }) }),
 };
 
@@ -108,11 +125,13 @@ export const menuApi = {
 
 export const pricingApi = {
   listTiers: () => apiRequest<(PriceTier & { _count: { companies: number } })[]>("/price-tiers"),
-  getTierEditor: (id: string) => apiRequest<{
-    tier: PriceTier;
-    dishes: { id: string; name: string; sku: string; costCents: number; isActive: boolean; overridePriceCents: number | null; priceCents: number | null; source: string }[];
-    options: { id: string; name: string; costCents: number; isActive: boolean; overridePriceCents: number | null; priceCents: number | null; source: string }[];
-  }>(`/price-tiers/${id}/editor`),
+  getTier: (id: string) => apiRequest<PriceTier>(`/price-tiers/${id}`),
+  createTier: (body: PriceTierWriteInput) => apiRequest<PriceTier>("/price-tiers", { method: "POST", body: JSON.stringify(body) }),
+  updateTier: (id: string, body: Partial<PriceTierWriteInput>) => apiRequest<PriceTier>(`/price-tiers/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  getTierEditor: (id: string) => apiRequest<TierEditor>(`/price-tiers/${id}/editor`),
+  /** One request for every change; priceCents null clears an override. */
+  updatePrices: (id: string, body: { dishOverrides: PriceOverride[]; optionOverrides: PriceOverride[] }) =>
+    apiRequest<{ success: true }>(`/price-tiers/${id}/prices`, { method: "PATCH", body: JSON.stringify(body) }),
 };
 
 // ─── Companies ──────────────────────────────────────────────────────────────
@@ -145,6 +164,8 @@ export const employeesApi = {
   create: (companyId: string, body: EmployeeWriteInput) => apiRequest<Employee>(`/companies/${companyId}/employees`, { method: "POST", body: JSON.stringify(body) }),
   update: (id: string, body: Partial<EmployeeWriteInput>) => apiRequest<Employee>(`/employees/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   menuPreview: (id: string) => apiRequest<MenuPreview>(`/employees/${id}/menu-preview`),
+  /** Direct access to one category by slug (the only way to reach a secret category). */
+  menuPreviewCategory: (id: string, slug: string) => apiRequest<MenuPreview>(`/employees/${id}/menu-preview/categories/${encodeURIComponent(slug)}`),
 };
 
 // ─── Settings ───────────────────────────────────────────────────────────────
@@ -174,12 +195,21 @@ export const DROP_STATUS_LABEL: Record<DeliveryDropStatus, string> = {
 };
 
 export const dispatchApi = {
-  list: (date: string) => apiRequest<PaginatedResponse<DispatchDrop>>(`/dispatch/drops?date=${encodeURIComponent(date)}&pageSize=100`),
-  reconcile: () => apiRequest<{ processedGroups: number; unattachedReadyOrdersFound: number; failures: { key: string; message: string }[] }>("/dispatch/drops/reconcile", { method: "POST" }),
+  /** search: company, address or driver; driverId: a staff id or "none". Filters apply before pagination. */
+  list: (query: DropListQuery | string) => {
+    const q = typeof query === "string" ? { date: query, pageSize: 100 } : { pageSize: 100, ...query };
+    return apiRequest<PaginatedResponse<DispatchDrop>>(`/dispatch/drops?${toQuery(q)}`);
+  },
+  reconcile: () => apiRequest<ReconcileResult>("/dispatch/drops/reconcile", { method: "POST" }),
   assignDriver: (dropId: string, driverId: string) =>
     apiRequest<DeliveryDrop>(`/dispatch/drops/${dropId}/assign-driver`, { method: "POST", body: JSON.stringify({ driverId }) }),
   outForDelivery: (dropId: string) => apiRequest<DeliveryDrop>(`/dispatch/drops/${dropId}/out-for-delivery`, { method: "POST" }),
   proofUrl: (dropId: string) => apiRequest<{ url: string; expiresInSeconds: number }>(`/dispatch/drops/${dropId}/proof-url`),
+};
+
+export const staffApi = {
+  /** Active staff whose role grants driver.own_drops.deliver (dispatch.assign_driver). */
+  drivers: () => apiRequest<DriverOption[]>("/staff/drivers"),
 };
 
 export const driverApi = {

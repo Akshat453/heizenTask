@@ -27,7 +27,7 @@ function initials(name: string) {
 
 const roleLabel = (role: string) => role.charAt(0) + role.slice(1).toLowerCase();
 
-export function UserMenu() {
+export function UserMenu({ triggerClassName }: { triggerClassName?: string } = {}) {
   const router = useRouter();
   const { user, logout } = useAuth();
   if (!user) return null;
@@ -43,7 +43,7 @@ export function UserMenu() {
 
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger render={<Button variant="ghost" size="icon" className="rounded-full" aria-label="Account menu" />}>
+      <DropdownMenuTrigger render={<Button variant="ghost" size="icon" className={triggerClassName ?? "rounded-full"} aria-label="Account menu" />}>
         <Avatar className="size-8">
           <AvatarFallback className="bg-secondary text-xs font-semibold text-secondary-foreground">{initials(user.name)}</AvatarFallback>
         </Avatar>

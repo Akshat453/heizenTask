@@ -7,6 +7,8 @@ import {
   PROOF_URL_TTL_SECONDS,
 } from '../../driver/services/delivery-proof.service.js';
 import { dropPlannedDispatchReadyAt, withOnTime } from '../drop-timing.js';
+import { dropOrdersSelect, summarizeDropOrders } from '../drop-orders.js';
+import type { Prisma } from '../../generated/prisma/client.js';
 import { pageArgs, paginate } from '../../common/dto/pagination-query.dto.js';
 
 @Injectable()
@@ -32,10 +34,28 @@ export class DispatchQueryService {
       };
     }
 
-    const where = {
+    const search = query.search?.trim();
+    const contains = (value: string) => ({
+      contains: value,
+      mode: 'insensitive' as const,
+    });
+    const where: Prisma.DeliveryDropWhereInput = {
       ...dateFilter,
       ...(query.status && { status: query.status }),
       ...(query.companyId && { companyId: query.companyId }),
+      ...(query.driverId && {
+        driverStaffUserId: query.driverId === 'none' ? null : query.driverId,
+      }),
+      ...(search && {
+        OR: [
+          { company: { name: contains(search) } },
+          { addressLabelSnapshot: contains(search) },
+          { addressLine1Snapshot: contains(search) },
+          { addressLine2Snapshot: contains(search) },
+          { addressCitySnapshot: contains(search) },
+          { driver: { name: contains(search) } },
+        ],
+      }),
     };
 
     const [data, totalItems] = await this.prisma.$transaction([
@@ -45,7 +65,7 @@ export class DispatchQueryService {
           company: { select: { name: true } },
           driver: { select: { name: true } },
           _count: { select: { orders: true } },
-          orders: { select: { deliveryLeadMinutesSnapshot: true } },
+          orders: { select: dropOrdersSelect },
         },
         orderBy: [{ scheduledDeliveryAt: 'asc' }, { id: 'asc' }],
         ...pageArgs(query),
@@ -55,6 +75,7 @@ export class DispatchQueryService {
     return paginate(
       data.map(({ orders, ...drop }) => ({
         ...withOnTime(drop),
+        ...summarizeDropOrders(orders),
         plannedDispatchReadyAt: dropPlannedDispatchReadyAt({
           scheduledDeliveryAt: drop.scheduledDeliveryAt,
           orders,

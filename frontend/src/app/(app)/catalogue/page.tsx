@@ -1,66 +1,42 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { catalogueApi, type Dish } from "@/lib/api";
+import { Plus } from "lucide-react";
+import Link from "next/link";
+import { parseAsStringLiteral, useQueryState } from "nuqs";
+import { PageHeader } from "@/components/app/page-header";
+import { TabNav } from "@/components/app/tab-nav";
+import { useAuth } from "@/components/auth/auth-provider";
+import { DishesTab } from "@/components/catalogue/dishes-tab";
+import { OptionsTab } from "@/components/catalogue/options-tab";
+import { Button } from "@/components/ui/button";
+import { P } from "@/lib/permissions";
 
 export default function CataloguePage() {
-  const [dishes, setDishes] = useState<Dish[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    async function fetchDishes() {
-      try {
-        const response = await catalogueApi.listDishes();
-        setDishes(response.data);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load dishes");
-      } finally {
-        setLoading(false);
-      }
-    }
-    fetchDishes();
-  }, []);
-
-  if (loading) return <div className="p-8">Loading catalogue...</div>;
-  if (error) return <div className="p-8 text-danger">{error}</div>;
+  const { can } = useAuth();
+  const [tab, setTab] = useQueryState("tab", parseAsStringLiteral(["dishes", "options"] as const).withDefault("dishes"));
+  const canManage = can(P.catalogueManage);
+  const newButton = (href: string, label: string) =>
+    canManage ? (
+      <Button render={<Link href={href} />} nativeButton={false}>
+        <Plus data-icon="inline-start" /> {label}
+      </Button>
+    ) : undefined;
 
   return (
-    <main className="p-8 max-w-7xl mx-auto">
-      <h1 className="text-2xl font-semibold mb-6">Catalogue (Dishes)</h1>
-      
-      {dishes.length === 0 ? (
-        <p className="text-muted-foreground">No dishes found.</p>
-      ) : (
-        <div className="overflow-x-auto rounded-lg border bg-card">
-          <table className="w-full text-sm text-left">
-            <thead className="bg-background border-b">
-              <tr>
-                <th className="px-6 py-3 font-medium">SKU</th>
-                <th className="px-6 py-3 font-medium">Name</th>
-                <th className="px-6 py-3 font-medium">Temp</th>
-                <th className="px-6 py-3 font-medium">Base Cost</th>
-                <th className="px-6 py-3 font-medium">Status</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {dishes.map((d) => (
-                <tr key={d.id} className="hover:bg-muted">
-                  <td className="px-6 py-4 font-mono text-xs">{d.sku}</td>
-                  <td className="px-6 py-4 font-medium">{d.name}</td>
-                  <td className="px-6 py-4">{d.temperature}</td>
-                  <td className="px-6 py-4">${(d.costCents / 100).toFixed(2)}</td>
-                  <td className="px-6 py-4">
-                    <span className={`px-2 py-1 rounded text-xs font-medium ${d.isActive ? "bg-success-soft text-success" : "bg-muted text-foreground"}`}>
-                      {d.isActive ? "Active" : "Inactive"}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+    <main className="flex flex-col gap-6 p-4 md:p-6">
+      <PageHeader
+        title="Dishes & options"
+        description={canManage ? "The catalogue every menu is built from. Dishes are deactivated, never deleted." : "The catalogue every menu is built from (view only)."}
+        tabs={
+          <TabNav
+            label="Catalogue"
+            tabs={[{ value: "dishes", label: "Dishes" }, { value: "options", label: "Options" }]}
+            value={tab}
+            onChange={(v) => void setTab(v === "dishes" ? null : v)}
+          />
+        }
+      />
+      {tab === "dishes" ? <DishesTab action={newButton("/catalogue/dishes/new", "New dish")} /> : <OptionsTab action={newButton("/catalogue/options/new", "New option")} />}
     </main>
   );
 }

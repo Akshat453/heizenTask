@@ -163,3 +163,8 @@ export function businessWallTimeToIso(isoDate: string, time: string, timeZone: s
   instant = wall - zoneOffsetMs(instant, timeZone); // second pass settles DST edges
   return new Date(instant).toISOString();
 }
+
+/** Packaging counts from the API, e.g. "18 boxed · 5 eco-tray". */
+export function packagingText(packaging: { name: string; count: number }[]): string {
+  return packaging.map((p) => `${p.count} ${p.name.toLowerCase()}`).join(" · ");
+}

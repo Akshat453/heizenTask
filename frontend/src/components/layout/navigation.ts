@@ -101,3 +101,11 @@ export function navItemForPath(pathname: string): NavItem | undefined {
 export function isNavItemActive(item: NavItem, pathname: string): boolean {
   return navItemForPath(pathname)?.href === item.href;
 }
+
+/** Routes a phone-only role needs. A user whose permitted pages are all here gets the minimal driver shell. */
+const PHONE_ROUTES = new Set(["/dashboard", "/driver"]);
+
+export function isPhoneOnlyUser(can: (permission: string) => boolean): boolean {
+  const hrefs = visibleNavGroups(can).flatMap((g) => g.items.map((i) => i.href));
+  return hrefs.length > 0 && hrefs.every((href) => PHONE_ROUTES.has(href));
+}

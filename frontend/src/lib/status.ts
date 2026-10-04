@@ -50,9 +50,24 @@ export const STATUS = {
     OUT_FOR_DELIVERY: { label: "Out for delivery", tone: "info", icon: Truck },
     DELIVERED: { label: "Delivered", tone: "success", icon: CircleCheck },
   },
+  /** Display-only countdown against the API's plannedDispatchReadyAt. */
+  dispatchTiming: {
+    LEAVES_SOON: { label: "Leave by", tone: "info", icon: Clock },
+    LEAVE_PASSED: { label: "Leave-by passed", tone: "warning", icon: TriangleAlert },
+  },
   onTime: {
     ON_TIME: { label: "On time", tone: "success", icon: CircleCheck },
     LATE: { label: "Late", tone: "danger", icon: AlarmClock },
+  },
+  /** Where a tier price comes from. */
+  priceSource: {
+    OVERRIDE: { label: "Override", tone: "progress", icon: Lock },
+    DERIVED: { label: "Derived", tone: "neutral", icon: Circle },
+    MISSING: { label: "Missing", tone: "danger", icon: CircleX },
+  },
+  active: {
+    ACTIVE: { label: "Active", tone: "success", icon: CircleCheck },
+    INACTIVE: { label: "Inactive", tone: "neutral", icon: Ban },
   },
   /** Order cut-off state (instants come from the API). */
   cutoff: {

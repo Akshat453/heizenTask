@@ -26,6 +26,7 @@ export class OrderQueryService {
     }
     if (query.status) where.status = query.status;
     if (query.companyId) where.companyId = query.companyId;
+    if (query.deliveryDropId) where.deliveryDropId = query.deliveryDropId;
 
     if (query.invoiced === true) where.invoiceOrder = { isNot: null };
     else if (query.invoiced === false) where.invoiceOrder = null;

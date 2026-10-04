@@ -1,176 +1,115 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { CircleCheck, Truck } from "lucide-react";
+import { useState } from "react";
+import { toast } from "sonner";
+import { EmptyState } from "@/components/app/empty-state";
+import { ErrorState } from "@/components/app/error-state";
 import { useAuth } from "@/components/auth/auth-provider";
+import { DeliverSheet } from "@/components/driver/deliver-sheet";
+import { useDriverToday } from "@/components/driver/queries";
+import { DeliveredStop, HeroStop, UpcomingStop } from "@/components/driver/stops";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Textarea } from "@/components/ui/textarea";
-import { describeError } from "@/lib/api-client";
-import { DROP_STATUS_LABEL, driverApi, type DriverDrop } from "@/lib/api";
+import { Progress } from "@/components/ui/progress";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useBusinessClock } from "@/hooks/use-business-clock";
+import type { DeliveryDrop, DriverDrop } from "@/lib/api";
+import { formatCount, formatDuration } from "@/lib/format";
+import { P } from "@/lib/permissions";
+import { cn } from "@/lib/utils";
 
-export default function DriverPage() {
+function resultText(result: DeliveryDrop): string {
+  if (result.onTime || !result.deliveredAt) return "Delivered on time";
+  const late = new Date(result.deliveredAt).getTime() - new Date(result.scheduledDeliveryAt).getTime();
+  return `Delivered ${formatDuration(late)} late`;
+}
+
+/** Phone-first route for the signed-in driver: progress, the next stop expanded, a sticky Mark delivered. */
+export default function DriverRoutePage() {
   const { can } = useAuth();
-  const [drops, setDrops] = useState<DriverDrop[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [refreshKey, setRefreshKey] = useState(0);
-  const [submitting, setSubmitting] = useState(false);
+  const { timeZone, nowMs } = useBusinessClock();
+  const today = useDriverToday();
+  const [delivering, setDelivering] = useState<DriverDrop | null>(null);
+  const [lastResult, setLastResult] = useState<DeliveryDrop | null>(null);
 
-  const [deliveryNote, setDeliveryNote] = useState("");
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const [activeDropId, setActiveDropId] = useState<string | null>(null);
-
-  useEffect(() => {
-    let active = true;
-    driverApi
-      .today()
-      .then((response) => {
-        if (!active) return;
-        setDrops(response.data);
-        setError(null);
-      })
-      .catch((err: unknown) => active && setError(describeError(err)))
-      .finally(() => active && setLoading(false));
-    return () => {
-      active = false;
-    };
-  }, [refreshKey]);
-
-  const refresh = () => {
-    setLoading(true);
-    setRefreshKey((key) => key + 1);
-  };
-
-  const handleDeliver = async (dropId: string) => {
-    setSubmitting(true);
-    try {
-      // The photo is optional proof; a note-only delivery is valid.
-      await driverApi.deliver(dropId, { note: deliveryNote, photo: fileInputRef.current?.files?.[0] ?? null });
-      setActiveDropId(null);
-      setDeliveryNote("");
-      if (fileInputRef.current) fileInputRef.current.value = "";
-      refresh();
-    } catch (err: unknown) {
-      alert(describeError(err, "Failed to record delivery"));
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  if (!can("driver.own_drops.read")) {
-    return <div className="p-8 text-destructive">Unauthorized: Driver access required.</div>;
-  }
+  const drops = [...(today.data?.data ?? [])].sort((a, b) => a.scheduledDeliveryAt.localeCompare(b.scheduledDeliveryAt));
+  const delivered = drops.filter((d) => d.status === "DELIVERED");
+  const pending = drops.filter((d) => d.status !== "DELIVERED");
+  const next = pending[0];
+  const late = delivered.filter((d) => d.onTime === false).length;
+  const canDeliver = can(P.driverOwnDropsDeliver);
+  const blocker = next && next.status !== "OUT_FOR_DELIVERY" ? "Dispatch hasn't sent this drop out yet." : null;
 
   return (
-    <div className="p-8 max-w-2xl mx-auto space-y-6">
-      <div className="flex justify-between items-center bg-card p-6 rounded-xl border border-border/40 shadow-sm">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight text-foreground">My Deliveries</h1>
-          <p className="text-muted-foreground mt-1">Today&apos;s assigned route</p>
-        </div>
-        <Button onClick={refresh} variant="secondary">Refresh Route</Button>
-      </div>
-
-      {loading ? (
-        <div className="text-center py-12 text-muted-foreground animate-pulse">Loading route...</div>
-      ) : error ? (
-        <div className="p-4 bg-destructive/10 text-destructive rounded-lg border border-destructive/20">{error}</div>
+    <main className="mx-auto flex w-full max-w-[480px] flex-col gap-4 px-4 pt-4 pb-32">
+      {today.isLoading ? (
+        <>
+          <Skeleton className="h-20" />
+          <Skeleton className="h-80" />
+        </>
+      ) : today.error ? (
+        <ErrorState error={today.error} title="Could not load your route" onRetry={() => void today.refetch()} />
       ) : drops.length === 0 ? (
-        <div className="text-center py-12 text-muted-foreground bg-muted/20 rounded-xl border border-dashed border-border">
-          No deliveries assigned for today.
+        <div className="rounded-lg border bg-card">
+          <EmptyState icon={Truck} title="No deliveries assigned for today." description="Dispatch assigns drops as orders become ready. This page refreshes every 30 seconds." />
         </div>
       ) : (
-        <div className="grid gap-6">
-          {drops.map((drop) => (
-            <Card key={drop.id} className="overflow-hidden border-2 transition-colors hover:border-primary/50">
-              <CardHeader className="bg-muted/20 border-b border-border/40">
-                <CardTitle className="flex justify-between items-start">
-                  <div>
-                    <div className="text-xl">{drop.company.name}</div>
-                    <div className="text-sm text-muted-foreground mt-1 font-normal">
-                      {new Date(drop.scheduledDeliveryAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </div>
-                  </div>
-                  <Badge variant={
-                    drop.status === "DELIVERED" ? "secondary" : 
-                    drop.status === "OUT_FOR_DELIVERY" ? "default" : "outline"
-                  } className="text-sm px-3 py-1">
-                    {DROP_STATUS_LABEL[drop.status]}
-                  </Badge>
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="pt-6 space-y-4">
-                <div>
-                  <h4 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-2">Delivery Address</h4>
-                  <p className="text-foreground font-medium">{drop.addressLabelSnapshot}</p>
-                  <p className="text-muted-foreground text-sm">{drop.addressLine1Snapshot}</p>
-                  {drop.addressLine2Snapshot && <p className="text-muted-foreground text-sm">{drop.addressLine2Snapshot}</p>}
-                  <p className="text-muted-foreground text-sm">
-                    {drop.addressCitySnapshot}, {drop.addressRegionSnapshot} {drop.addressPostalCodeSnapshot}
-                  </p>
-                </div>
+        <>
+          <section className="rounded-lg border bg-card p-4" aria-label="Progress">
+            <div className="flex items-baseline justify-between">
+              <p className="text-lg font-semibold">
+                <span className="num">{formatCount(delivered.length)}</span> of <span className="num">{formatCount(drops.length)}</span> delivered
+              </p>
+              {late > 0 && <span className="text-sm font-medium text-danger">{late} late</span>}
+            </div>
+            <Progress value={(delivered.length / drops.length) * 100} className="mt-3" aria-label="Delivered" />
+          </section>
 
-                {drop.company.driverInstructions && (
-                  <div className="bg-warning-soft text-warning p-4 rounded-lg border border-warning/20">
-                    <h4 className="text-sm font-semibold uppercase tracking-wider mb-1 flex items-center gap-2">
-                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-                      Instructions
-                    </h4>
-                    <p className="text-sm">{drop.company.driverInstructions}</p>
-                  </div>
+          {lastResult && (
+            <p role="status" className={cn("flex items-center gap-2 rounded-lg border p-3 text-sm font-medium", lastResult.onTime ? "border-success/30 bg-success-soft text-success" : "border-danger/30 bg-danger-soft text-danger")}>
+              <CircleCheck className="size-4" /> {resultText(lastResult)}
+            </p>
+          )}
+
+          <ol className="flex flex-col gap-2" aria-label="Stops in time order">
+            {drops.map((drop) => (
+              <li key={drop.id}>
+                {drop.status === "DELIVERED" ? (
+                  <DeliveredStop drop={drop} timeZone={timeZone} />
+                ) : drop.id === next?.id ? (
+                  <HeroStop drop={drop} timeZone={timeZone} nowMs={nowMs} />
+                ) : (
+                  <UpcomingStop drop={drop} timeZone={timeZone} />
                 )}
+              </li>
+            ))}
+          </ol>
+          {!next && <EmptyState icon={CircleCheck} title="All of today's drops are delivered" description="Nice work." />}
+        </>
+      )}
 
-                <div className="flex justify-between items-center py-2 border-t border-border/40 mt-4">
-                  <span className="text-muted-foreground">Orders to deliver:</span>
-                  <span className="font-bold text-lg">{drop._count.orders}</span>
-                </div>
-                {drop.onTime !== null && (
-                  <div className="flex justify-between items-center">
-                    <span className="text-muted-foreground">Delivered:</span>
-                    <Badge variant={drop.onTime ? "secondary" : "destructive"}>{drop.onTime ? "On time" : "Late"}</Badge>
-                  </div>
-                )}
-              </CardContent>
-
-              {drop.status === "OUT_FOR_DELIVERY" && can("driver.own_drops.deliver") && (
-                <CardFooter className="bg-muted/10 border-t border-border/40 p-6 flex-col gap-4 items-stretch">
-                  {activeDropId === drop.id ? (
-                    <div className="space-y-4 animate-in fade-in slide-in-from-top-4">
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">Delivery Photo Proof (Optional — JPEG, PNG or WebP, max 5 MB)</label>
-                        <input
-                          type="file"
-                          accept="image/jpeg,image/png,image/webp"
-                          capture="environment"
-                          ref={fileInputRef}
-                          className="w-full text-sm text-muted-foreground file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-primary file:text-primary-foreground hover:file:bg-primary/90"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">Notes (Optional)</label>
-                        <Textarea 
-                          placeholder="e.g., Left at reception with John"
-                          value={deliveryNote}
-                          onChange={(e) => setDeliveryNote(e.target.value)}
-                        />
-                      </div>
-                      <div className="flex gap-3">
-                        <Button className="flex-1" disabled={submitting} onClick={() => handleDeliver(drop.id)}>{submitting ? "Submitting..." : "Submit Delivery"}</Button>
-                        <Button variant="outline" onClick={() => setActiveDropId(null)}>Cancel</Button>
-                      </div>
-                    </div>
-                  ) : (
-                    <Button size="lg" className="w-full text-lg h-14" onClick={() => setActiveDropId(drop.id)}>
-                      Complete Delivery
-                    </Button>
-                  )}
-                </CardFooter>
-              )}
-            </Card>
-          ))}
+      {next && canDeliver && (
+        <div className="fixed inset-x-0 bottom-0 z-30 border-t bg-background/95 px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur">
+          <div className="mx-auto max-w-[480px]">
+            {blocker && <p className="mb-2 text-center text-sm text-muted-foreground">{blocker}</p>}
+            <Button className="h-14 w-full text-base" disabled={Boolean(blocker)} onClick={() => setDelivering(next)}>
+              <CircleCheck data-icon="inline-start" /> Mark delivered
+            </Button>
+          </div>
         </div>
       )}
-    </div>
+
+      {delivering && (
+        <DeliverSheet
+          drop={delivering}
+          onClose={() => setDelivering(null)}
+          onDelivered={(result) => {
+            setDelivering(null);
+            setLastResult(result);
+            toast.success(resultText(result));
+          }}
+        />
+      )}
+    </main>
   );
 }
