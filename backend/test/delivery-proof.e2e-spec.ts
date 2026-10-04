@@ -5,7 +5,7 @@ import bcrypt from 'bcryptjs';
 import request from 'supertest';
 import type { App } from 'supertest/types.js';
 import { configureApp } from '../src/app.setup.js';
-import { AppModule } from '../src/app.module.js';
+import { CLOUDINARY_VARS } from '../src/config/environment.js';
 import { BusinessTimeService } from '../src/business-time/business-time.service.js';
 import { DispatchLifecycleService } from '../src/dispatch/services/dispatch-lifecycle.service.js';
 import { CLOUDINARY_SDK } from '../src/driver/services/cloudinary-sdk.js';
@@ -30,6 +30,11 @@ import {
  * Delivery proofs over real HTTP on TEST_DATABASE_URL with the Cloudinary SDK
  * boundary faked (no live credentials). One app has a fake SDK; the other is
  * the plain AppModule without CLOUDINARY_* config.
+ *
+ * ConfigModule validates once, when AppModule is first imported, and
+ * process.env wins over .env. So the CLOUDINARY_* variables are blanked before
+ * AppModule is (dynamically) imported, making the run independent of any real
+ * local credentials, and restored afterwards.
  */
 const DATE = '2099-12-08';
 const AFTER_CUTOFF = Temporal.Instant.from('2100-01-01T00:00:00Z');
@@ -73,7 +78,11 @@ describe(
     const driverId = testId('PROOF:driver');
     const drops: string[] = [];
 
+    const savedCloudinary = Object.fromEntries(
+      CLOUDINARY_VARS.map((name) => [name, process.env[name]]),
+    );
     const boot = async (sdk: unknown) => {
+      const { AppModule } = await import('../src/app.module.js');
       const builder = Test.createTestingModule({ imports: [AppModule] });
       if (sdk !== undefined)
         builder.overrideProvider(CLOUDINARY_SDK).useValue(sdk);
@@ -94,6 +103,7 @@ describe(
     };
 
     beforeAll(async () => {
+      for (const name of CLOUDINARY_VARS) process.env[name] = '';
       withSdk = await boot(fakeSdk);
       withoutConfig = await boot(undefined); // the real provider: no CLOUDINARY_* in the test env
       prisma = withSdk.get(PrismaService);
@@ -218,9 +228,17 @@ describe(
             where: { id: { in: createdPermissionIds } },
           });
       } finally {
-        await restoreSettings();
-        await withSdk.close();
-        await withoutConfig.close();
+        try {
+          await restoreSettings();
+          await withSdk.close();
+          await withoutConfig.close();
+        } finally {
+          for (const name of CLOUDINARY_VARS) {
+            const value = savedCloudinary[name];
+            if (value === undefined) delete process.env[name];
+            else process.env[name] = value;
+          }
+        }
       }
     }, 120_000);
 

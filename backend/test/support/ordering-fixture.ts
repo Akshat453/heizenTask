@@ -15,33 +15,47 @@ import { testEmail, testId, testName } from './fixtures.js';
 
 const ALL_DAYS = Object.values(DayOfWeek);
 
+/**
+ * Applies the calendar the e2e suites assume (cut-off 16:00, one working day,
+ * every day a Kitchen day) for the duration of a suite, whatever the shared test
+ * database already holds (e.g. demo seed settings), and returns a function that
+ * restores the previous settings row and working days exactly.
+ */
 export async function ensurePlatformSettings(
   prisma: PrismaClient,
 ): Promise<() => Promise<void>> {
   const existing = await prisma.platformSettings.findUnique({
     where: { id: 1 },
   });
-  const existingDays = await prisma.kitchenWorkingDay.count();
-  if (!existing) {
-    await prisma.platformSettings.create({
-      data: {
-        id: 1,
-        businessTimezone: 'Asia/Kolkata',
-        cutoffTime: new Date(Date.UTC(1970, 0, 1, 16, 0)),
-        cutoffWorkingDayCount: 1,
-        kitchenReadyBufferMinutes: 30,
-        atRiskWindowMinutes: 30,
-      },
-    });
-  }
-  if (existingDays === 0)
-    await prisma.kitchenWorkingDay.createMany({
-      data: ALL_DAYS.map((dayOfWeek) => ({ dayOfWeek })),
-    });
+  const existingDays = (await prisma.kitchenWorkingDay.findMany()).map(
+    (row) => row.dayOfWeek,
+  );
+  const fixtureSettings = {
+    businessTimezone: 'Asia/Kolkata',
+    cutoffTime: new Date(Date.UTC(1970, 0, 1, 16, 0)),
+    cutoffWorkingDayCount: 1,
+    kitchenReadyBufferMinutes: 30,
+    atRiskWindowMinutes: 30,
+  };
+  await prisma.platformSettings.upsert({
+    where: { id: 1 },
+    create: { id: 1, ...fixtureSettings },
+    update: fixtureSettings,
+  });
+  await prisma.kitchenWorkingDay.deleteMany({});
+  await prisma.kitchenWorkingDay.createMany({
+    data: ALL_DAYS.map((dayOfWeek) => ({ dayOfWeek })),
+  });
   return async () => {
-    if (existingDays === 0) await prisma.kitchenWorkingDay.deleteMany({});
-    if (!existing)
-      await prisma.platformSettings.deleteMany({ where: { id: 1 } });
+    await prisma.kitchenWorkingDay.deleteMany({});
+    if (existingDays.length)
+      await prisma.kitchenWorkingDay.createMany({
+        data: existingDays.map((dayOfWeek) => ({ dayOfWeek })),
+      });
+    if (existing) {
+      const { id: _id, updatedAt: _updatedAt, ...previous } = existing;
+      await prisma.platformSettings.update({ where: { id: 1 }, data: previous });
+    } else await prisma.platformSettings.deleteMany({ where: { id: 1 } });
   };
 }
 

@@ -22,6 +22,7 @@ import {
   seedId,
   type PlainDate,
 } from './seed-support.js';
+import { companySeeds } from './seed-data.js';
 
 const prisma = createSeedClient();
 const PASSWORD = 'Test@1234';
@@ -34,12 +35,17 @@ function plainDate(value: Date): PlainDate {
   };
 }
 
-/** Must match prisma/seed.ts: 16 scenario orders + 28 review-window days + 7 history days. */
-const REVIEW_WINDOW_DAYS = 28;
-const HISTORY_DAYS = 7;
-const EXPECTED_DEMO_ORDERS = 16 + REVIEW_WINDOW_DAYS + HISTORY_DAYS;
+/** Ranges the enriched demo seed must stay within (see prisma/seed-data.ts). */
+const COMPANY_RANGE = [8, 10] as const;
+const EMPLOYEE_RANGE = [40, 60] as const;
+const ORDER_RANGE = [120, 180] as const;
+const INVOICE_RANGE = [8, 12] as const;
 /** Reviewers must always see at least two weeks of forward data. */
 const REQUIRED_COVERAGE_DAYS = 14;
+
+function inRange(value: number, [min, max]: readonly [number, number], label: string) {
+  assert(value >= min && value <= max, `${label}: ${value} is outside ${min}–${max}.`);
+}
 
 async function verifyAccounts() {
   const expected = [
@@ -204,6 +210,11 @@ async function verifyReferenceData() {
     'Seed tiers must have one active default.',
   );
   assert.equal(
+    await prisma.priceTier.count({ where: { isActive: true, isDefault: true } }),
+    1,
+    'Exactly one active default PriceTier must exist.',
+  );
+  assert.equal(
     tiers.find((tier) => tier.name === 'Standard')?.strategy,
     PriceTierStrategy.MANUAL,
   );
@@ -245,58 +256,62 @@ async function verifyReferenceData() {
 
 async function verifyCompanies(today: PlainDate) {
   const companies = await prisma.company.findMany({
-    where: {
-      id: {
-        in: ['acme', 'bluepeak', 'northstar'].map((key) =>
-          seedId(`company:${key}`),
-        ),
-      },
-    },
+    where: { id: { in: companySeeds.map((company) => seedId(`company:${company.key}`)) } },
     include: {
       domains: true,
       addresses: true,
-      employees: true,
+      employees: { include: { defaultDeliveryAddress: true } },
       workingDays: true,
       ownerEmployee: true,
+      hiddenCategories: true,
+      hiddenDishes: true,
     },
   });
-  assert.equal(companies.length, 3);
+  inRange(companies.length, COMPANY_RANGE, 'Demo companies');
+  const employees = companies.flatMap((company) => company.employees);
+  inRange(employees.length, EMPLOYEE_RANGE, 'Demo employees');
   for (const company of companies) {
     assert(company.domains.length >= 1, `${company.name} needs a domain.`);
     assert(company.addresses.length >= 1, `${company.name} needs an address.`);
-    assert(
-      company.employees.length >= 3,
-      `${company.name} needs realistic employees.`,
-    );
+    assert(company.employees.length >= 5, `${company.name} needs realistic employees.`);
     assert(company.ownerEmployee, `${company.name} needs an owner.`);
+    assert.equal(company.ownerEmployee.companyId, company.id, `${company.name}'s owner must belong to it.`);
+    for (const employee of company.employees)
+      assert.equal(
+        employee.defaultDeliveryAddress?.companyId,
+        company.id,
+        `${employee.name}: default address must belong to ${company.name}.`,
+      );
+  }
+  const domains = companies.flatMap((company) => company.domains.map((domain) => domain.domain));
+  assert.equal(new Set(domains).size, domains.length, 'Company domains must be unique.');
+  assert(companies.some((company) => company.priceTierId === null), 'A company on the default tier is required.');
+  assert(new Set(companies.flatMap((company) => (company.priceTierId ? [company.priceTierId] : []))).size >= 2, 'Both non-default tiers must be in use.');
+  assert(companies.filter((company) => company.hiddenCategories.length || company.hiddenDishes.length).length >= 2, 'Menu hiding examples are missing.');
+  assert(companies.some((company) => company.defaultDriverStaffUserId === null), 'A company without a default driver is required.');
+  for (const key of ['acme', 'greenfield']) {
+    const company = companies.find((item) => item.id === seedId(`company:${key}`))!;
+    assert(company.workingDays.some((row) => row.dayOfWeek === dayOfWeek(today)), `${company.name} must accept delivery today.`);
     assert.equal(
-      company.ownerEmployee.companyId,
-      company.id,
-      `${company.name}'s owner must belong to it.`,
+      await prisma.companyHoliday.count({ where: { companyId: company.id, date: asDateOnly(today) } }),
+      0,
+      `${company.name} must not have a holiday today.`,
     );
   }
-  const acme = companies.find(
-    (company) => company.id === seedId('company:acme'),
-  )!;
-  assert(
-    acme.workingDays.some((row) => row.dayOfWeek === dayOfWeek(today)),
-    'Acme must accept delivery today.',
-  );
-  assert.equal(
-    await prisma.companyHoliday.count({
-      where: { companyId: acme.id, date: asDateOnly(today) },
-    }),
-    0,
-    'Acme must not have a holiday today.',
-  );
-  assert.equal(
-    new Set(
-      companies.flatMap((company) =>
-        company.domains.map((domain) => domain.domain),
-      ),
-    ).size,
-    3,
-  );
+}
+
+/** The app's cut-off walk-back over the stored kitchen calendar and settings. */
+async function cutoffFor(date: PlainDate): Promise<Date> {
+  const settings = await prisma.platformSettings.findUniqueOrThrow({ where: { id: 1 } });
+  const days = new Set((await prisma.kitchenWorkingDay.findMany()).map((row) => row.dayOfWeek));
+  const holidays = new Set((await prisma.kitchenHoliday.findMany()).map((row) => dateKey(plainDate(row.date))));
+  let cursor = date;
+  let remaining = settings.cutoffWorkingDayCount;
+  while (remaining > 0) {
+    cursor = addDays(cursor, -1);
+    if (days.has(dayOfWeek(cursor)) && !holidays.has(dateKey(cursor))) remaining -= 1;
+  }
+  return businessInstant(cursor, settings.cutoffTime.getUTCHours(), settings.cutoffTime.getUTCMinutes());
 }
 
 async function verifyOrders(today: PlainDate) {
@@ -304,12 +319,12 @@ async function verifyOrders(today: PlainDate) {
     where: { orderNumber: { startsWith: 'DEMO-' } },
     include: {
       employee: true,
-      company: { include: { workingDays: true, holidays: true } },
+      company: { include: { workingDays: true, holidays: true, hiddenCategories: true, hiddenDishes: true } },
       deliveryAddress: true,
       packagingType: true,
       lines: {
         include: {
-          dish: true,
+          dish: { include: { menuCategoryItems: true } },
           combinations: { include: { options: true, prepUnit: true } },
         },
       },
@@ -318,225 +333,130 @@ async function verifyOrders(today: PlainDate) {
       deliveryDrop: { include: { driver: true } },
     },
   });
-  assert.equal(
-    orders.length,
-    EXPECTED_DEMO_ORDERS,
-    `The deterministic demo order set must contain ${EXPECTED_DEMO_ORDERS} orders.`,
-  );
+  inRange(orders.length, ORDER_RANGE, 'Demo orders');
   for (const status of Object.values(OrderStatus)) {
-    assert(
-      orders.some((order) => order.status === status),
-      `No demo order has status ${status}.`,
-    );
+    assert(orders.some((order) => order.status === status), `No demo order has status ${status}.`);
   }
   const dates = orders.map((order) => plainDate(order.deliveryDate));
-  assert(
-    dates.some((date) => compareDates(date, today) < 0),
-    'Past orders are missing.',
-  );
-  assert(
-    dates.some((date) => compareDates(date, today) === 0),
-    "Today's orders are missing.",
-  );
-  assert(
-    dates.some((date) => compareDates(date, today) > 0),
-    'Future orders are missing.',
-  );
-  assert(
-    dates.some((date) => compareDates(date, addDays(today, -7)) <= 0),
-    'The historical window must reach approximately seven days back.',
-  );
-  assert(
-    dates.some((date) => compareDates(date, addDays(today, 14)) >= 0),
-    'The future review window must reach at least fourteen days ahead.',
-  );
+  assert(dates.some((date) => compareDates(date, today) < 0), 'Past orders are missing.');
+  assert(dates.some((date) => compareDates(date, addDays(today, -7)) <= 0), 'The historical window must reach approximately seven days back.');
+  assert(dates.some((date) => compareDates(date, addDays(today, 28)) >= 0), 'The future window must reach 28 days ahead.');
+  const now = Date.now();
 
   for (const order of orders) {
-    assert.equal(
-      order.employee.companyId,
-      order.companyId,
-      `${order.orderNumber}: employee/company mismatch.`,
-    );
-    assert(
-      order.deliveryAddress,
-      `${order.orderNumber}: delivery address is missing.`,
-    );
-    assert.equal(
-      order.deliveryAddress.companyId,
-      order.companyId,
-      `${order.orderNumber}: address/company mismatch.`,
-    );
-    assert.equal(
-      order.deliveryAddressLabelSnapshot,
-      order.deliveryAddress.label,
-    );
-    assert.equal(
-      order.deliveryAddressLine1Snapshot,
-      order.deliveryAddress.line1,
-    );
+    const label = order.orderNumber;
+    assert.equal(order.employee.companyId, order.companyId, `${label}: employee/company mismatch.`);
+    assert(order.deliveryAddress, `${label}: delivery address is missing.`);
+    assert.equal(order.deliveryAddress.companyId, order.companyId, `${label}: address/company mismatch.`);
+    assert.equal(order.deliveryAddressLabelSnapshot, order.deliveryAddress.label);
+    assert.equal(order.deliveryAddressLine1Snapshot, order.deliveryAddress.line1);
     assert.equal(order.packagingNameSnapshot, order.packagingType.name);
-    assert.equal(
-      order.deliveryLeadMinutesSnapshot,
-      order.company.deliveryLeadMinutes,
-    );
+    assert.equal(order.deliveryLeadMinutesSnapshot, order.company.deliveryLeadMinutes);
     const orderDate = plainDate(order.deliveryDate);
+    assert(order.company.workingDays.some((row) => row.dayOfWeek === dayOfWeek(orderDate)), `${label}: company does not deliver on this weekday.`);
     assert(
-      order.company.workingDays.some(
-        (row) => row.dayOfWeek === dayOfWeek(orderDate),
-      ),
-      `${order.orderNumber}: company does not deliver on this weekday.`,
+      !order.company.holidays.some((holiday) => dateKey(plainDate(holiday.date)) === dateKey(orderDate)),
+      `${label}: falls on a company holiday.`,
     );
-    assert(
-      !order.company.holidays.some(
-        (holiday) => dateKey(plainDate(holiday.date)) === dateKey(orderDate),
-      ),
-      `${order.orderNumber}: falls on a company holiday.`,
-    );
+    // Employee choice flags: a non-default address, time or packaging needs the matching permission.
+    const defaultTime = businessInstant(orderDate, order.company.defaultDeliveryTime.getUTCHours(), order.company.defaultDeliveryTime.getUTCMinutes());
+    if (order.deliveryAddressId !== order.employee.defaultDeliveryAddressId)
+      assert(order.employee.canChooseDeliveryAddress, `${label}: non-default address without permission.`);
+    if (order.deliveryAt.getTime() !== defaultTime.getTime())
+      assert(order.employee.canChangeDeliveryTime, `${label}: non-default time without permission.`);
+    if (order.packagingTypeId !== order.company.defaultPackagingTypeId)
+      assert(order.employee.canChangePackaging, `${label}: non-default packaging without permission.`);
 
     let calculatedOrderTotal = 0;
     for (const line of order.lines) {
-      assert(
-        line.dishNameSnapshot.length > 0 && line.dishSkuSnapshot.length > 0,
-      );
+      assert(line.dishNameSnapshot.length > 0 && line.dishSkuSnapshot.length > 0);
       assert.equal(line.dishNameSnapshot, line.dish.name);
       assert.equal(line.dishSkuSnapshot, line.dish.sku);
+      assert(!order.company.hiddenDishes.some((row) => row.dishId === line.dishId), `${label}: uses a dish hidden for its company.`);
+      assert(
+        !line.dish.menuCategoryItems.every((item) => order.company.hiddenCategories.some((row) => row.categoryId === item.categoryId)),
+        `${label}: uses a dish whose categories are all hidden for its company.`,
+      );
+      if (line.dish.minimumOrderQuantity)
+        assert(line.quantity >= line.dish.minimumOrderQuantity, `${label}: below the dish minimum quantity.`);
       assert.equal(
-        line.combinations.reduce(
-          (sum, combination) => sum + combination.quantity,
-          0,
-        ),
+        line.combinations.reduce((sum, combination) => sum + combination.quantity, 0),
         line.quantity,
-        `${order.orderNumber}: combination quantities do not reconcile.`,
+        `${label}: combination quantities do not reconcile.`,
       );
       let calculatedLineTotal = 0;
       for (const combination of line.combinations) {
         const additions = combination.options.reduce((sum, option) => {
-          assert(
-            option.optionGroupNameSnapshot.length > 0 &&
-              option.optionNameSnapshot.length > 0,
-          );
-          if (option.portionSizeId)
-            assert(option.portionNameSnapshot, 'Portion snapshot is missing.');
+          assert(option.optionGroupNameSnapshot.length > 0 && option.optionNameSnapshot.length > 0);
+          if (option.portionSizeId) assert(option.portionNameSnapshot, 'Portion snapshot is missing.');
           return sum + option.optionPriceCents + option.portionExtraCents;
         }, 0);
-        assert.equal(
-          combination.unitPriceCents,
-          line.dishUnitPriceCents + additions,
-          `${order.orderNumber}: combination unit price is wrong.`,
-        );
-        assert.equal(
-          combination.totalCents,
-          combination.unitPriceCents * combination.quantity,
-          `${order.orderNumber}: combination total is wrong.`,
-        );
+        assert.equal(combination.unitPriceCents, line.dishUnitPriceCents + additions, `${label}: combination unit price is wrong.`);
+        assert.equal(combination.totalCents, combination.unitPriceCents * combination.quantity, `${label}: combination total is wrong.`);
         calculatedLineTotal += combination.totalCents;
+        // Exactly one PrepUnit per combination once confirmed; none before.
+        if (order.confirmedAt) {
+          assert(combination.prepUnit, `${label}: confirmed combination without a PrepUnit.`);
+          assert.equal(combination.prepUnit.quantity, combination.quantity);
+        } else assert.equal(combination.prepUnit, null, `${label}: unconfirmed order has a PrepUnit.`);
       }
-      assert.equal(
-        line.lineTotalCents,
-        calculatedLineTotal,
-        `${order.orderNumber}: line total is wrong.`,
-      );
+      assert.equal(line.lineTotalCents, calculatedLineTotal, `${label}: line total is wrong.`);
       calculatedOrderTotal += calculatedLineTotal;
     }
-    assert.equal(
-      order.subtotalCents,
-      calculatedOrderTotal,
-      `${order.orderNumber}: subtotal is wrong.`,
-    );
-    assert.equal(
-      order.totalCents,
-      calculatedOrderTotal,
-      `${order.orderNumber}: total is wrong.`,
-    );
-    if (order.confirmedAt)
-      assert.equal(
-        order.billableTotalCents,
-        order.totalCents,
-        `${order.orderNumber}: confirmed amount is not frozen.`,
-      );
-    else
-      assert.equal(
-        order.billableTotalCents,
-        null,
-        `${order.orderNumber}: non-confirmed order is billable.`,
-      );
-    assert(
-      order.events.length >= 1,
-      `${order.orderNumber}: timeline is empty.`,
-    );
+    assert.equal(order.subtotalCents, calculatedOrderTotal, `${label}: subtotal is wrong.`);
+    assert.equal(order.totalCents, calculatedOrderTotal, `${label}: total is wrong.`);
+    if (order.confirmedAt) assert.equal(order.billableTotalCents, order.totalCents, `${label}: confirmed amount is not frozen.`);
+    else assert.equal(order.billableTotalCents, null, `${label}: non-confirmed order is billable.`);
+    assert(order.events.length >= 1, `${label}: timeline is empty.`);
+    for (const at of [order.createdAt, order.placedAt, order.confirmedAt, order.cancelledAt, order.rejectedAt, order.kitchenStartedAt, order.kitchenReadyAt])
+      if (at) assert(at.getTime() <= now, `${label}: has a lifecycle timestamp in the future.`);
     if (order.deliveryDrop) {
       assert.equal(order.deliveryDrop.companyId, order.companyId);
-      assert.equal(
-        order.deliveryDrop.scheduledDeliveryAt.getTime(),
-        order.deliveryAt.getTime(),
-      );
-      assert.equal(
-        order.deliveryDrop.addressLine1Snapshot,
-        order.deliveryAddressLine1Snapshot,
-      );
+      assert.equal(order.deliveryDrop.scheduledDeliveryAt.getTime(), order.deliveryAt.getTime());
+      assert.equal(order.deliveryDrop.addressLine1Snapshot, order.deliveryAddressLine1Snapshot);
     }
+    // A future DRAFT/PLACED order is still before its cut-off; today's may be awaiting the cut-off run.
+    if ((order.status === OrderStatus.DRAFT || order.status === OrderStatus.PLACED) && compareDates(orderDate, today) > 0)
+      assert(now < (await cutoffFor(orderDate)).getTime(), `${label}: ${order.status} after its cut-off has passed.`);
   }
 
-  const combinationDemo = orders.find(
-    (order) => order.orderNumber === 'DEMO-TODAY-CONF-001',
-  )!;
+  const combinationDemo = orders.find((order) => order.orderNumber === 'DEMO-TODAY-CONF-001')!;
   assert.equal(combinationDemo.lines[0]?.quantity, 10);
-  assert.equal(combinationDemo.lines[0]?.combinations.length, 2);
   assert.deepEqual(
-    combinationDemo.lines[0]?.combinations
-      .map((combination) => combination.quantity)
-      .sort((a, b) => a - b),
+    combinationDemo.lines[0]?.combinations.map((combination) => combination.quantity).sort((a, b) => a - b),
     [4, 6],
   );
-  const cancelledAfterConfirmation = orders.find(
-    (order) => order.orderNumber === 'DEMO-PAST-CAN-001',
-  )!;
+  const cancelledAfterConfirmation = orders.find((order) => order.orderNumber === 'DEMO-PAST-CAN-001')!;
+  assert(cancelledAfterConfirmation.confirmedAt && cancelledAfterConfirmation.cancelledAt && cancelledAfterConfirmation.billableTotalCents !== null);
+  const draftCancelled = orders.find((order) => order.orderNumber === 'DEMO-PAST-CAN-002')!;
+  assert(draftCancelled.cancelledAt && !draftCancelled.placedAt && draftCancelled.billableTotalCents === null, 'Pre-confirmation cancellation must not be billable.');
+  for (const rejected of orders.filter((order) => order.status === OrderStatus.REJECTED))
+    assert.equal(rejected.billableTotalCents, null);
   assert(
-    cancelledAfterConfirmation.confirmedAt &&
-      cancelledAfterConfirmation.cancelledAt &&
-      cancelledAfterConfirmation.billableTotalCents !== null,
+    orders.some((order) => compareDates(plainDate(order.deliveryDate), today) > 0 && (order.status === OrderStatus.DRAFT || order.status === OrderStatus.PLACED)),
+    'Upcoming DRAFT/PLACED examples are missing.',
   );
-  const rejected = orders.find(
-    (order) => order.status === OrderStatus.REJECTED,
-  )!;
-  assert.equal(rejected.billableTotalCents, null);
-  // Coverage relative to the CURRENT business date (not to the seed-run date): every
-  // day from today through +14 has an order in a Drop assigned to the demo driver.
-  for (let dayOffset = 0; dayOffset <= REQUIRED_COVERAGE_DAYS; dayOffset += 1) {
-    const date = dateKey(addDays(today, dayOffset));
-    const covered = orders.some(
-      (order) =>
-        dateKey(plainDate(order.deliveryDate)) === date &&
-        order.deliveryDrop?.driver?.email === 'driver@test.com' &&
-        (order.status === OrderStatus.CONFIRMED || order.status === OrderStatus.DELIVERED),
-    );
-    assert(covered, `No driver-assigned demo delivery on ${date} (today+${dayOffset}).`);
-  }
-  for (const windowOrder of orders.filter((order) => order.orderNumber.startsWith('DEMO-WINDOW-'))) {
-    assert.equal(windowOrder.status, OrderStatus.CONFIRMED, `${windowOrder.orderNumber} must be CONFIRMED.`);
-    assert.equal(windowOrder.deliveryDrop?.status, DeliveryDropStatus.DISPATCH_READY, `${windowOrder.orderNumber} must be dispatch-ready.`);
-    assert.equal(windowOrder.deliveryDrop?.driver?.email, 'driver@test.com', `${windowOrder.orderNumber} is not assigned to the demo driver.`);
-  }
+  assert(
+    orders.some((order) => order.lines.some((line) => line.combinations.some((combination) => combination.options.some((option) => option.portionExtraCents > 0)))),
+    'A portion-surcharge example is missing.',
+  );
+  assert(new Set(orders.map((order) => order.companyId)).size >= COMPANY_RANGE[0], 'Every demo company needs orders.');
 
-  // Seed data follows the same lifecycle semantics as the running application.
+  // Lifecycle semantics shared with the running application.
   for (const order of orders) {
     const dropStatus = order.deliveryDrop?.status;
-    if (dropStatus === DeliveryDropStatus.DELIVERED) {
+    if (dropStatus === DeliveryDropStatus.DELIVERED)
       assert.equal(order.status, OrderStatus.DELIVERED, `${order.orderNumber} is in a delivered Drop but not DELIVERED.`);
-    }
     if (dropStatus === DeliveryDropStatus.DISPATCH_READY || dropStatus === DeliveryDropStatus.OUT_FOR_DELIVERY) {
       assert.equal(order.status, OrderStatus.CONFIRMED, `${order.orderNumber} is in an active Drop but not CONFIRMED.`);
       assert(order.kitchenReadyAt, `${order.orderNumber} is in a Drop before it is Kitchen-ready.`);
     }
-    if (order.status === OrderStatus.DELIVERED) {
+    if (order.status === OrderStatus.DELIVERED)
       assert.equal(dropStatus, DeliveryDropStatus.DELIVERED, `${order.orderNumber} is DELIVERED without a delivered Drop.`);
-    }
-    if (order.status === OrderStatus.CANCELLED || order.status === OrderStatus.REJECTED || order.status === OrderStatus.DRAFT || order.status === OrderStatus.PLACED) {
+    if (order.status === OrderStatus.CONFIRMED && order.kitchenReadyAt)
+      assert(order.deliveryDropId, `${order.orderNumber} is Kitchen-ready but in no Drop.`);
+    if (order.status !== OrderStatus.CONFIRMED && order.status !== OrderStatus.DELIVERED)
       assert.equal(order.deliveryDropId, null, `${order.orderNumber} (${order.status}) must not belong to a Drop.`);
-    }
-    if (order.deliveryDrop?.photoUrl) {
-      assert(!/^https?:/i.test(order.deliveryDrop.photoUrl), 'Drop.photoUrl must hold a private object key, not a URL.');
-    }
   }
   const cutoffTables = await prisma.$queryRawUnsafe<unknown[]>(
     `SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'CutoffRun'`,
@@ -545,122 +465,87 @@ async function verifyOrders(today: PlainDate) {
 }
 
 async function verifyOperations(today: PlainDate) {
-  const prepUnits = await prisma.prepUnit.findMany({
-    include: { order: true, combination: true, station: true },
-  });
-  assert(prepUnits.length >= 25, 'Prep units are missing.');
-  assert(
-    prepUnits.some((unit) => unit.startedAt === null && unit.doneAt === null),
-    'Not-started prep example is missing.',
-  );
-  assert(
-    prepUnits.some((unit) => unit.startedAt !== null && unit.doneAt === null),
-    'Started prep example is missing.',
-  );
-  assert(
-    prepUnits.some((unit) => unit.doneAt !== null),
-    'Completed prep example is missing.',
-  );
+  const driver = await prisma.staffUser.findUniqueOrThrow({ where: { email: 'driver@test.com' } });
+  const prepUnits = await prisma.prepUnit.findMany({ include: { order: true, combination: true } });
+  for (const state of ['NOT_STARTED', 'STARTED', 'DONE'] as const)
+    assert(
+      prepUnits.some((unit) =>
+        state === 'DONE' ? unit.doneAt !== null : state === 'STARTED' ? unit.startedAt !== null && unit.doneAt === null : unit.startedAt === null && unit.doneAt === null,
+      ),
+      `PrepUnit state ${state} is missing.`,
+    );
   for (const prep of prepUnits) {
     assert.equal(prep.quantity, prep.combination.quantity);
     assert(prep.stationNameSnapshot.length > 0);
-    if (prep.doneAt)
-      assert(prep.startedAt, 'A completed prep unit must have a start time.');
+    if (prep.doneAt) assert(prep.startedAt, 'A completed prep unit must have a start time.');
   }
-  const unfinished = await prisma.order.findFirst({
-    where: {
-      orderNumber: { startsWith: 'DEMO-' },
-      status: OrderStatus.CONFIRMED,
-      prepUnits: { some: { doneAt: null } },
-    },
-  });
-  assert(unfinished, 'A confirmed order with unfinished prep is required.');
-  const readyDrop = await prisma.deliveryDrop.findFirst({
-    where: {
-      id: seedId('drop:today-grouped'),
-      status: DeliveryDropStatus.DISPATCH_READY,
-    },
-    include: { orders: { include: { prepUnits: true } } },
-  });
-  assert(
-    readyDrop && readyDrop.orders.length > 1,
-    'The grouped dispatch-ready drop is missing.',
-  );
-  assert(
-    readyDrop.orders.every(
-      (order) =>
-        order.prepUnits.length > 0 &&
-        order.prepUnits.every((unit) => unit.doneAt),
-    ),
-    'Dispatch-ready drop contains unfinished prep.',
-  );
 
-  const driver = await prisma.staffUser.findUniqueOrThrow({
-    where: { email: 'driver@test.com' },
+  const drops = await prisma.deliveryDrop.findMany({ include: { orders: { include: { prepUnits: true } } } });
+  for (const status of Object.values(DeliveryDropStatus))
+    assert(drops.some((drop) => drop.status === status), `No Drop has status ${status}.`);
+  assert.equal(drops.filter((drop) => drop.orders.length === 0).length, 0, 'Empty Drops must not exist (stale seed rows?).');
+  const mutableKeys = new Set<string>();
+  for (const drop of drops) {
+    if (drop.status !== DeliveryDropStatus.DISPATCH_READY) continue;
+    // Grouping rule: one mutable Drop per company + address + exact time.
+    const key = `${drop.companyId}|${drop.addressLine1Snapshot}|${drop.scheduledDeliveryAt.toISOString()}`;
+    assert(!mutableKeys.has(key), `Two dispatch-ready Drops share the grouping key ${key}.`);
+    mutableKeys.add(key);
+    assert(
+      drop.orders.every((order) => order.prepUnits.length > 0 && order.prepUnits.every((unit) => unit.doneAt)),
+      'A dispatch-ready Drop contains unfinished prep.',
+    );
+  }
+  for (const drop of drops.filter((item) => item.status !== DeliveryDropStatus.DISPATCH_READY))
+    assert(drop.driverStaffUserId, 'Departed and delivered Drops must have a driver.');
+  for (const drop of drops) if (drop.photoUrl) assert(!/^https?:/i.test(drop.photoUrl), 'Drop.photoUrl must hold a private locator, not a URL.');
+  assert(drops.some((drop) => drop.orders.length > 1), 'A grouped multi-order Drop is required.');
+  assert(drops.some((drop) => drop.status === DeliveryDropStatus.DISPATCH_READY && !drop.driverStaffUserId), 'An unassigned ready Drop is required.');
+  const delivered = drops.filter((drop) => drop.status === DeliveryDropStatus.DELIVERED && drop.deliveredAt);
+  const onTime = delivered.map((drop) => drop.deliveredAt!.getTime() <= drop.scheduledDeliveryAt.getTime());
+  assert(onTime.includes(true) && onTime.includes(false), 'Delivered Drops must include both on-time and late deliveries.');
+
+  // Day-by-day coverage relative to the CURRENT business date: no thin days.
+  const orders = await prisma.order.findMany({
+    where: { orderNumber: { startsWith: 'DEMO-' }, deliveryDate: { gte: asDateOnly(today), lte: asDateOnly(addDays(today, REQUIRED_COVERAGE_DAYS)) } },
+    include: { prepUnits: true },
   });
-  const todayDrops = await prisma.deliveryDrop.findMany({
-    where: {
-      driverStaffUserId: driver.id,
-      scheduledDeliveryAt: {
-        gte: businessInstant(today, 0, 0),
-        lt: businessInstant(addDays(today, 1), 0, 0),
-      },
-    },
-    orderBy: { scheduledDeliveryAt: 'asc' },
-  });
-  assert(todayDrops.length >= 3, 'driver@test.com needs multiple drops today.');
-  assert(
-    todayDrops.some(
-      (drop) => drop.status === DeliveryDropStatus.DISPATCH_READY,
-    ),
-  );
-  assert(
-    todayDrops.some(
-      (drop) => drop.status === DeliveryDropStatus.OUT_FOR_DELIVERY,
-    ),
-  );
-  assert(
-    todayDrops.some((drop) => drop.status === DeliveryDropStatus.DELIVERED),
-  );
-  const reviewDrops = await prisma.deliveryDrop.findMany({
-    where: {
-      id: {
-        in: Array.from({ length: REVIEW_WINDOW_DAYS }, (_, index) =>
-          seedId(`drop:review-day-${String(index + 1).padStart(2, '0')}`),
-        ),
-      },
-      driverStaffUserId: driver.id,
-    },
-    include: { orders: true },
-  });
-  assert.equal(
-    reviewDrops.length,
-    REVIEW_WINDOW_DAYS,
-    'Every future review date needs a deterministic driver drop.',
-  );
-  assert(
-    reviewDrops.every(
+  let totalOrders = 0;
+  for (let dayOffset = 0; dayOffset <= REQUIRED_COVERAGE_DAYS; dayOffset += 1) {
+    const date = addDays(today, dayOffset);
+    const label = `${dateKey(date)} (today+${dayOffset})`;
+    const dayOrders = orders.filter((order) => dateKey(plainDate(order.deliveryDate)) === dateKey(date));
+    const dayDrops = drops.filter(
       (drop) =>
-        drop.status === DeliveryDropStatus.DISPATCH_READY &&
-        drop.orders.length >= 1,
-    ),
-    'Review-window drops must be dispatch-ready and contain an order.',
+        drop.scheduledDeliveryAt >= businessInstant(date, 0, 0) && drop.scheduledDeliveryAt < businessInstant(addDays(date, 1), 0, 0),
+    );
+    const units = dayOrders.flatMap((order) => order.prepUnits);
+    totalOrders += dayOrders.length;
+    assert(dayOrders.length >= 3, `${label}: fewer than 3 orders.`);
+    assert(new Set(dayOrders.map((order) => order.companyId)).size >= 2, `${label}: fewer than 2 companies.`);
+    assert(dayDrops.length >= 2, `${label}: fewer than 2 Drops.`);
+    assert(dayDrops.some((drop) => drop.driverStaffUserId === driver.id), `${label}: no Drop for driver@test.com.`);
+    assert(new Set(units.map((unit) => unit.stationNameSnapshot)).size >= 2, `${label}: fewer than 2 kitchen stations.`);
+    assert(units.some((unit) => unit.doneAt === null), `${label}: no unfinished kitchen work.`);
+  }
+  assert(totalOrders / (REQUIRED_COVERAGE_DAYS + 1) >= 4, 'The next 14 days are too thin on average.');
+
+  // Today is the richest day.
+  const todayOrders = orders.filter((order) => dateKey(plainDate(order.deliveryDate)) === dateKey(today));
+  assert(todayOrders.length >= 10, 'Today needs a rich set of orders.');
+  for (const status of [OrderStatus.DRAFT, OrderStatus.PLACED, OrderStatus.CONFIRMED, OrderStatus.DELIVERED])
+    assert(todayOrders.some((order) => order.status === status), `Today has no ${status} order.`);
+  const todayUnits = todayOrders.flatMap((order) => order.prepUnits);
+  assert(todayUnits.some((unit) => !unit.startedAt), 'Today needs not-started prep.');
+  assert(todayUnits.some((unit) => unit.startedAt && !unit.doneAt), 'Today needs started prep.');
+  assert(todayUnits.some((unit) => unit.doneAt), 'Today needs done prep.');
+  assert(new Set(todayUnits.map((unit) => unit.stationNameSnapshot)).size >= 3, 'Today needs several stations.');
+  const todayDrops = drops.filter(
+    (drop) => drop.scheduledDeliveryAt >= businessInstant(today, 0, 0) && drop.scheduledDeliveryAt < businessInstant(addDays(today, 1), 0, 0),
   );
-  const historicalDelivered = await prisma.order.findFirst({
-    where: {
-      orderNumber: { startsWith: 'DEMO-' },
-      status: OrderStatus.DELIVERED,
-      deliveryDate: { lt: asDateOnly(today) },
-    },
-  });
-  assert(historicalDelivered, 'Historical delivered order is missing.');
-  const historyDrops = await prisma.deliveryDrop.findMany({
-    where: { id: { in: Array.from({ length: HISTORY_DAYS }, (_, index) => seedId(`drop:history-day-${String(index + 1).padStart(2, '0')}`)) } },
-  });
-  assert.equal(historyDrops.length, HISTORY_DAYS, 'Every history day needs a delivered Drop.');
-  assert(historyDrops.every((drop) => drop.status === DeliveryDropStatus.DELIVERED && drop.deliveredAt), 'History drops must be delivered.');
-  const onTime = historyDrops.map((drop) => drop.deliveredAt!.getTime() <= drop.scheduledDeliveryAt.getTime());
-  assert(onTime.includes(true) && onTime.includes(false), 'History drops must include both on-time and late deliveries.');
+  for (const status of Object.values(DeliveryDropStatus))
+    assert(todayDrops.some((drop) => drop.status === status), `Today has no ${status} Drop.`);
+  assert(todayDrops.filter((drop) => drop.driverStaffUserId === driver.id).length >= 3, 'driver@test.com needs multiple drops today.');
 }
 
 async function verifyBilling() {
@@ -668,9 +553,10 @@ async function verifyBilling() {
     where: { invoiceNumber: { startsWith: 'DEMO-' } },
     include: { orders: { include: { order: true } } },
   });
-  assert.equal(invoices.length, 2);
+  inRange(invoices.length, INVOICE_RANGE, 'Demo invoices');
   assert(invoices.some((invoice) => invoice.status === InvoiceStatus.PAID));
   assert(invoices.some((invoice) => invoice.status === InvoiceStatus.UNPAID));
+  assert(invoices.some((invoice) => invoice.orders.length > 1), 'A multi-order invoice is required.');
   for (const invoice of invoices) {
     assert(invoice.orders.length > 0);
     assert.equal(
@@ -678,25 +564,17 @@ async function verifyBilling() {
       invoice.orders.reduce((sum, row) => sum + row.amountCents, 0),
       `${invoice.invoiceNumber}: total does not reconcile.`,
     );
+    assert.equal(invoice.status === InvoiceStatus.PAID, invoice.paidAt !== null, `${invoice.invoiceNumber}: paid status and paidAt disagree.`);
     for (const row of invoice.orders) {
       assert.equal(row.amountCents, row.order.billableTotalCents);
+      assert.equal(row.order.companyId, invoice.companyId, `${invoice.invoiceNumber}: order from another company.`);
       assert(row.order.confirmedAt);
-      assert.notEqual(row.order.status, OrderStatus.REJECTED);
-      assert.notEqual(row.order.status, OrderStatus.DRAFT);
-      assert.notEqual(row.order.status, OrderStatus.PLACED);
     }
   }
   const uninvoiced = await prisma.order.count({
-    where: {
-      orderNumber: { startsWith: 'DEMO-' },
-      billableTotalCents: { not: null },
-      invoiceOrder: null,
-    },
+    where: { orderNumber: { startsWith: 'DEMO-' }, billableTotalCents: { not: null }, invoiceOrder: null },
   });
-  assert(
-    uninvoiced >= 3,
-    'Confirmed uninvoiced orders are required for billing work.',
-  );
+  assert(uninvoiced >= 3, 'Confirmed uninvoiced orders are required for billing work.');
 }
 
 async function verifySettings() {

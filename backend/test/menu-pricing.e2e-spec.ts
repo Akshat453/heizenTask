@@ -166,15 +166,35 @@ describe(
       const res = await agent
         .get(`/employees/${fx.employeeId}/menu-preview`)
         .expect(200);
+      // Menu categories are global, so other rows in the test database (the MP2
+      // fixture, or demo seed data) also count. Expected = active dishes on
+      // active items of active non-secret categories, not hidden for this
+      // company, with no price on its MANUAL tier.
+      const unpriced = await prisma.menuCategoryItem.findMany({
+        where: {
+          isActive: true,
+          category: {
+            isActive: true,
+            isSecret: false,
+            hiddenByCompanies: { none: { companyId: fx.companyId } },
+          },
+          dish: {
+            isActive: true,
+            hiddenByCompanies: { none: { companyId: fx.companyId } },
+            tierPrices: { none: { priceTierId: fx.tierId } },
+          },
+        },
+        select: { dishId: true },
+        distinct: ['dishId'],
+      });
+      expect(unpriced.map((row) => row.dishId)).toContain(unpricedDishId);
       expect(res.body.rules).toEqual({
         tierId: fx.tierId,
         tierName: 'TEST-MP-TIER',
         usedDefaultTier: false,
         hiddenCategoryCount: 0,
         hiddenDishCount: 1,
-        // MP-UNPRICED, plus the MP2 fixture's two dishes: menu categories are
-        // global, and MP2's dishes are priced only on MP2's own tier.
-        unpricedDishCount: 3,
+        unpricedDishCount: unpriced.length,
       });
       const dishIds = res.body.categories.flatMap(
         (c: { dishes: { id: string }[] }) => c.dishes.map((d) => d.id),

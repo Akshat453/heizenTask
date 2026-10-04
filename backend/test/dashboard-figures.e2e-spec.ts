@@ -199,7 +199,22 @@ describe('Dashboard figures (PostgreSQL)', { timeout: 600_000 }, () => {
       count: 1,
       totalCents: placedTomorrowTotal,
     });
-    expect(metrics.oldestUninvoicedDeliveryDate).toBe(TWO_DAYS_AGO);
+    // Database-wide metric: the fixture's oldest uninvoiced order is two days
+    // ago, but older billable rows (e.g. demo seed data) may share the test DB.
+    const oldestBillable = await prisma.order.findFirst({
+      where: { billableTotalCents: { not: null }, invoiceOrder: null },
+      orderBy: { deliveryDate: 'asc' },
+      select: { deliveryDate: true },
+    });
+    const fixtureOldest = await prisma.order.findFirst({
+      where: { companyId: fx.companyId, billableTotalCents: { not: null }, invoiceOrder: null },
+      orderBy: { deliveryDate: 'asc' },
+      select: { deliveryDate: true },
+    });
+    expect(fixtureOldest?.deliveryDate.toISOString().slice(0, 10)).toBe(TWO_DAYS_AGO);
+    expect(metrics.oldestUninvoicedDeliveryDate).toBe(
+      oldestBillable!.deliveryDate.toISOString().slice(0, 10),
+    );
     expect(metrics.deliveriesByDate).toHaveLength(11);
     expect(metrics.deliveriesByDate[0]!.date).toBe('2099-09-13');
     const byDate = Object.fromEntries(
