@@ -60,6 +60,7 @@ export function resolveFromChain(
   chain: TierChain,
   itemId: string,
   data: ItemPriceData,
+  options: { skipStartOverride?: boolean } = {},
 ): PriceResolution {
   const adjustments: number[] = [];
   let index = 0;
@@ -68,7 +69,12 @@ export function resolveFromChain(
 
   for (;;) {
     const tier = chain.tiers[index]!;
-    const override = data.overrides.get(tier.id)?.get(itemId);
+    // "Derived" asks what the requested tier's own strategy produces, so only
+    // that tier's override is skipped; source tiers' overrides still apply.
+    const override =
+      index === 0 && options.skipStartOverride
+        ? undefined
+        : data.overrides.get(tier.id)?.get(itemId);
     let base: PriceResolution | null = null;
 
     if (override !== undefined) {
@@ -183,6 +189,28 @@ export class PriceResolverService {
     items: { dishIds?: readonly string[]; optionIds?: readonly string[] },
     db: PrismaDb = this.prisma,
   ): Promise<BatchPriceResolution> {
+    return this.resolve(tierId, items, db, false);
+  }
+
+  /**
+   * What the tier's strategy would produce for each item, ignoring the tier's
+   * own override. null when it cannot be derived (MANUAL tier, inactive item,
+   * misconfigured or inactive source).
+   */
+  async resolveDerivedPrices(
+    tierId: string,
+    items: { dishIds?: readonly string[]; optionIds?: readonly string[] },
+    db: PrismaDb = this.prisma,
+  ): Promise<BatchPriceResolution> {
+    return this.resolve(tierId, items, db, true);
+  }
+
+  private async resolve(
+    tierId: string,
+    items: { dishIds?: readonly string[]; optionIds?: readonly string[] },
+    db: PrismaDb,
+    derived: boolean,
+  ): Promise<BatchPriceResolution> {
     const dishIds = [...new Set(items.dishIds ?? [])];
     const optionIds = [...new Set(items.optionIds ?? [])];
     const chain = await this.loadTierChain(tierId, db);
@@ -249,13 +277,18 @@ export class PriceResolverService {
       ),
     };
 
+    const resolveOne = (id: string, data: ItemPriceData): PriceResolution => {
+      if (!derived) return resolveFromChain(chain, id, data);
+      try {
+        return resolveFromChain(chain, id, data, { skipStartOverride: true });
+      } catch (error) {
+        if (error instanceof ConflictException) return MISSING;
+        throw error;
+      }
+    };
     return {
-      dishes: new Map(
-        dishIds.map((id) => [id, resolveFromChain(chain, id, dishData)]),
-      ),
-      options: new Map(
-        optionIds.map((id) => [id, resolveFromChain(chain, id, optionData)]),
-      ),
+      dishes: new Map(dishIds.map((id) => [id, resolveOne(id, dishData)])),
+      options: new Map(optionIds.map((id) => [id, resolveOne(id, optionData)])),
     };
   }
 

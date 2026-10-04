@@ -75,6 +75,9 @@ function menu(flags: Partial<OrderableMenu['employee']> = {}): OrderableMenu {
   return {
     categories: [],
     dishesById: new Map(),
+    unpricedDishIds: new Set(),
+    hiddenCategoryCount: 0,
+    hiddenDishCount: 0,
     tierId: 'tier',
     employee: {
       id: 'emp',

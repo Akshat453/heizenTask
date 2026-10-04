@@ -14,6 +14,7 @@ import {
   IsNotEmpty,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { BooleanQuery } from '../../common/decorators/boolean-query.decorator.js';
 import { OrderStatus } from '../../generated/prisma/enums.js';
 import { LOCAL_TIME_PATTERN } from '../../business-time/business-time.utils.js';
 import { IsBusinessDate } from '../../business-time/business-date.validator.js';
@@ -136,9 +137,7 @@ export class OrderQueryDto {
   @IsUUID()
   companyId?: string;
 
-  @IsOptional()
-  @IsBoolean()
-  @Type(() => Boolean)
+  @BooleanQuery()
   invoiced?: boolean;
 
   @IsOptional()

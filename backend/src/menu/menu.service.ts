@@ -18,13 +18,48 @@ import type {
 } from './dto/menu.dto.js';
 
 const menuInclude = {
+  hiddenByCompanies: { select: { companyId: true } },
   items: {
     orderBy: { displayOrder: 'asc' as const },
     include: {
-      dish: { select: { id: true, name: true, sku: true, isActive: true } },
+      dish: {
+        select: {
+          id: true,
+          name: true,
+          sku: true,
+          isActive: true,
+          hiddenByCompanies: { select: { companyId: true } },
+        },
+      },
     },
   },
 } satisfies Prisma.MenuCategoryInclude;
+
+type CategoryWithHiding = Prisma.MenuCategoryGetPayload<{
+  include: typeof menuInclude;
+}>;
+
+const companyIdsOf = (rows: { companyId: string }[]) =>
+  rows.map((row) => row.companyId).sort();
+
+/** hiddenByCompanyIds on the category and on each item's dish. */
+function withHiding({
+  hiddenByCompanies,
+  items,
+  ...category
+}: CategoryWithHiding) {
+  return {
+    ...category,
+    hiddenByCompanyIds: companyIdsOf(hiddenByCompanies),
+    items: items.map(
+      ({ dish: { hiddenByCompanies: dishHidden, ...dish }, ...item }) => ({
+        ...item,
+        dish,
+        hiddenByCompanyIds: companyIdsOf(dishHidden),
+      }),
+    ),
+  };
+}
 
 @Injectable()
 export class MenuService {
@@ -37,13 +72,24 @@ export class MenuService {
     const [data, totalItems] = await this.prisma.$transaction([
       this.prisma.menuCategory.findMany({
         where,
-        include: { _count: { select: { items: true } } },
+        include: {
+          _count: { select: { items: true, hiddenByCompanies: true } },
+        },
         orderBy: [{ displayOrder: 'asc' }, { name: 'asc' }, { id: 'asc' }],
         ...pageArgs(query),
       }),
       this.prisma.menuCategory.count({ where }),
     ]);
-    return paginate(data, totalItems, query.page, query.pageSize);
+    return paginate(
+      data.map(({ _count, ...category }) => ({
+        ...category,
+        _count: { items: _count.items },
+        hiddenCompanyCount: _count.hiddenByCompanies,
+      })),
+      totalItems,
+      query.page,
+      query.pageSize,
+    );
   }
 
   async getCategory(id: string) {
@@ -52,7 +98,7 @@ export class MenuService {
       include: menuInclude,
     });
     if (!category) throw new NotFoundException('Menu category not found.');
-    return category;
+    return withHiding(category);
   }
 
   async createCategory(dto: CreateMenuCategoryDto) {
@@ -122,10 +168,12 @@ export class MenuService {
             isActive: item.isActive,
           })),
         });
-      return tx.menuCategory.findUniqueOrThrow({
-        where: { id: categoryId },
-        include: menuInclude,
-      });
+      return withHiding(
+        await tx.menuCategory.findUniqueOrThrow({
+          where: { id: categoryId },
+          include: menuInclude,
+        }),
+      );
     });
   }
 

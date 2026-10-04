@@ -266,4 +266,19 @@ describe('orderability policy', () => {
       optionIds: ['on'],
     });
   });
+
+  it('records visible dishes left out only because they have no price on the tier', () => {
+    const categories = [
+      rawCategory('mains', [bowl, wrap]),
+      rawCategory('hidden-cat', [rawDish({ id: 'in-hidden-category' })]),
+    ];
+    const result = evaluate('PREVIEW', {
+      categories,
+      hiddenCategoryIds: new Set(['hidden-cat']),
+      prices: prices({ bowl: 300 }), // wrap and the hidden category's dish are unpriced
+    });
+    expect(dishIds(result)).toEqual(['bowl']);
+    // Hidden content is not "unpriced"; only the visible, active, unpriced wrap counts.
+    expect([...result.unpricedDishIds]).toEqual(['wrap']);
+  });
 });

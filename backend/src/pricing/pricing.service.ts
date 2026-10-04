@@ -12,7 +12,10 @@ import type {
   UpdatePriceTierDto,
   UpdateTierPricesDto,
 } from './dto/pricing.dto.js';
-import { PriceResolverService } from './price-resolver.service.js';
+import {
+  type PriceResolution,
+  PriceResolverService,
+} from './price-resolver.service.js';
 
 type TierConfig = {
   strategy: PriceTierStrategy;
@@ -36,16 +39,101 @@ export class PricingService {
     private readonly resolver: PriceResolverService,
   ) {}
 
-  listTiers() {
-    return this.prisma.priceTier.findMany({
-      orderBy: [{ isDefault: 'desc' }, { name: 'asc' }],
-      include: {
-        sourceTier: { select: { id: true, name: true, isActive: true } },
-        _count: {
-          select: { companies: true, dishPrices: true, optionPrices: true },
+  /**
+   * Tiers with missingDishCount / missingOptionCount: active dishes and options
+   * the menu resolver cannot price on that tier (one batched resolution per
+   * tier). Counts are null when the tier's configuration cannot be resolved.
+   */
+  async listTiers() {
+    const [tiers, dishes, options] = await Promise.all([
+      this.prisma.priceTier.findMany({
+        orderBy: [{ isDefault: 'desc' }, { name: 'asc' }],
+        include: {
+          sourceTier: { select: { id: true, name: true, isActive: true } },
+          _count: {
+            select: { companies: true, dishPrices: true, optionPrices: true },
+          },
         },
-      },
+      }),
+      this.prisma.dish.findMany({
+        where: { isActive: true },
+        select: { id: true },
+      }),
+      this.prisma.option.findMany({
+        where: { isActive: true },
+        select: { id: true },
+      }),
+    ]);
+    const items = {
+      dishIds: dishes.map(({ id }) => id),
+      optionIds: options.map(({ id }) => id),
+    };
+    const missing = (prices: Map<string, PriceResolution>) =>
+      [...prices.values()].filter((p) => p.priceCents === null).length;
+    return Promise.all(
+      tiers.map(async (tier) => {
+        try {
+          const resolved = await this.resolver.resolvePrices(tier.id, items);
+          return {
+            ...tier,
+            missingDishCount: missing(resolved.dishes),
+            missingOptionCount: missing(resolved.options),
+          };
+        } catch (error) {
+          if (!(error instanceof ConflictException)) throw error;
+          return { ...tier, missingDishCount: null, missingOptionCount: null };
+        }
+      }),
+    );
+  }
+
+  /** Effective price of one dish or option on every tier. */
+  async itemPrices(kind: 'dish' | 'option', itemId: string) {
+    const exists =
+      kind === 'dish'
+        ? await this.prisma.dish.findUnique({
+            where: { id: itemId },
+            select: { id: true },
+          })
+        : await this.prisma.option.findUnique({
+            where: { id: itemId },
+            select: { id: true },
+          });
+    if (!exists)
+      throw new NotFoundException(
+        kind === 'dish' ? 'Dish not found.' : 'Option not found.',
+      );
+    const tiers = await this.prisma.priceTier.findMany({
+      orderBy: [{ isDefault: 'desc' }, { name: 'asc' }],
+      select: { id: true, name: true, isDefault: true, isActive: true },
     });
+    return Promise.all(
+      tiers.map(async (tier) => {
+        let resolution: PriceResolution = {
+          priceCents: null,
+          source: 'MISSING',
+        };
+        try {
+          const resolved = await this.resolver.resolvePrices(
+            tier.id,
+            kind === 'dish' ? { dishIds: [itemId] } : { optionIds: [itemId] },
+          );
+          resolution = (
+            kind === 'dish' ? resolved.dishes : resolved.options
+          ).get(itemId)!;
+        } catch (error) {
+          if (!(error instanceof ConflictException)) throw error;
+        }
+        return {
+          tierId: tier.id,
+          tierName: tier.name,
+          isDefault: tier.isDefault,
+          isActive: tier.isActive,
+          effectiveCents: resolution.priceCents,
+          source: resolution.source,
+        };
+      }),
+    );
   }
 
   async getTier(id: string) {
@@ -157,21 +245,42 @@ export class PricingService {
         },
       }),
     ]);
-    const resolved = await this.resolver.resolvePrices(id, {
+    const ids = {
       dishIds: dishes.map((dish) => dish.id),
       optionIds: options.map((option) => option.id),
+    };
+    const [resolved, derived] = await Promise.all([
+      this.resolver.resolvePrices(id, ids),
+      this.resolver.resolveDerivedPrices(id, ids),
+    ]);
+    /** override / derived (strategy only) / effective (what new orders use). */
+    const row = (
+      tierPrices: { priceCents: number }[],
+      effective: PriceResolution,
+      formula: PriceResolution,
+    ) => ({
+      overrideCents: tierPrices[0]?.priceCents ?? null,
+      derivedCents: formula.priceCents,
+      effectiveCents: effective.priceCents,
+      source: effective.source,
     });
     return {
       tier,
       dishes: dishes.map(({ tierPrices, ...dish }) => ({
         ...dish,
-        overridePriceCents: tierPrices[0]?.priceCents ?? null,
-        ...resolved.dishes.get(dish.id)!,
+        ...row(
+          tierPrices,
+          resolved.dishes.get(dish.id)!,
+          derived.dishes.get(dish.id)!,
+        ),
       })),
       options: options.map(({ tierPrices, ...option }) => ({
         ...option,
-        overridePriceCents: tierPrices[0]?.priceCents ?? null,
-        ...resolved.options.get(option.id)!,
+        ...row(
+          tierPrices,
+          resolved.options.get(option.id)!,
+          derived.options.get(option.id)!,
+        ),
       })),
     };
   }

@@ -1,5 +1,4 @@
 import { Body, Controller, Get, Patch, Post, Query } from '@nestjs/common';
-import { PaginationQueryDto } from '../common/dto/pagination-query.dto.js';
 import { IdParam } from '../common/decorators/id-param.decorator.js';
 import { RequirePermissions } from '../common/decorators/require-permissions.decorator.js';
 import { CatalogueService } from './catalogue.service.js';
@@ -7,6 +6,7 @@ import {
   CreateDishDto,
   CreateOptionDto,
   DishQueryDto,
+  OptionQueryDto,
   UpdateDishDto,
   UpdateOptionDto,
 } from './dto/catalogue.dto.js';
@@ -44,7 +44,7 @@ export class DishesController {
 export class OptionsController {
   constructor(private readonly service: CatalogueService) {}
   @Get() @RequirePermissions('catalogue.read') list(
-    @Query() query: PaginationQueryDto,
+    @Query() query: OptionQueryDto,
   ) {
     return this.service.listOptions(query);
   }

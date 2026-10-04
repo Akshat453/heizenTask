@@ -25,6 +25,9 @@ const employeeSelect = {
 } as const;
 
 export type OrderableMenu = OrderabilityResult & {
+  /** Rows in the company's hidden lists (CompanyHiddenCategory / CompanyHiddenDish). */
+  hiddenCategoryCount: number;
+  hiddenDishCount: number;
   employee: {
     id: string;
     name: string;
@@ -122,6 +125,12 @@ export class OrderabilityService {
       },
     });
 
-    return { ...result, employee, tierId };
+    return {
+      ...result,
+      employee,
+      tierId,
+      hiddenCategoryCount: hiddenCategories.length,
+      hiddenDishCount: hiddenDishes.length,
+    };
   }
 }

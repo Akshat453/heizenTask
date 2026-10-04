@@ -115,6 +115,8 @@ export type OrderabilityInput = {
 export type OrderabilityResult = {
   categories: OrderableCategory[];
   dishesById: Map<string, OrderableDish>;
+  /** Active, visible dishes left out only because they have no price on the tier. */
+  unpricedDishIds: Set<string>;
 };
 
 /** Dish/Option ids whose prices are needed (only active candidates). */
@@ -209,6 +211,7 @@ export function buildOrderableMenu(
   input: OrderabilityInput,
 ): OrderabilityResult {
   const dishesById = new Map<string, OrderableDish>();
+  const unpricedDishIds = new Set<string>();
   const categories: OrderableCategory[] = [];
 
   for (const category of input.categories) {
@@ -226,7 +229,13 @@ export function buildOrderableMenu(
         continue;
       const orderable =
         dishesById.get(item.dish.id) ?? evaluateDish(item.dish, input);
-      if (!orderable) continue;
+      if (!orderable) {
+        if (
+          (input.prices.dishes.get(item.dish.id)?.priceCents ?? null) === null
+        )
+          unpricedDishIds.add(item.dish.id);
+        continue;
+      }
       dishesById.set(orderable.id, orderable);
       dishes.push({ displayOrder: item.displayOrder, dish: orderable });
     }
@@ -234,5 +243,5 @@ export function buildOrderableMenu(
     categories.push({ category, dishes });
   }
 
-  return { categories, dishesById };
+  return { categories, dishesById, unpricedDishIds };
 }

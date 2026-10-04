@@ -40,3 +40,19 @@ export class PricingController {
     return this.service.updatePrices(id, dto);
   }
 }
+
+/** Effective price of one dish or option on every tier (dish/option editors). */
+@Controller()
+export class ItemPricesController {
+  constructor(private readonly service: PricingService) {}
+  @Get('dishes/:id/prices') @RequirePermissions('pricing.read') dishPrices(
+    @IdParam() id: string,
+  ) {
+    return this.service.itemPrices('dish', id);
+  }
+  @Get('options/:id/prices') @RequirePermissions('pricing.read') optionPrices(
+    @IdParam() id: string,
+  ) {
+    return this.service.itemPrices('option', id);
+  }
+}

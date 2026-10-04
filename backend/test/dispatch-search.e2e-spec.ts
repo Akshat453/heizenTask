@@ -233,7 +233,9 @@ describe('Drop search and summaries (PostgreSQL)', { timeout: 600_000 }, () => {
     const [drop] = (await list({ search: 'test-dsa-company' })).data;
     expect(drop!.meals).toBe(5);
     expect(drop!.orders.map((o) => o.id).sort()).toEqual([...ordersInA].sort());
-    expect(drop!.orders.map((o) => o.meals).sort()).toEqual([2, 3]);
+    expect(drop!.orders.map((o) => o.meals).sort((x, y) => x - y)).toEqual([
+      2, 3,
+    ]);
     expect(drop!.packaging).toEqual([
       { name: 'TEST-DSA-BOX', count: 1 },
       { name: 'TEST-DSA-TRAY', count: 1 },

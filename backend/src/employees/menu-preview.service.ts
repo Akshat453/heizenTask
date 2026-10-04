@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service.js';
 import type { OrderableDish } from '../menu/orderability.policy.js';
 import {
   type OrderableMenu,
@@ -7,12 +8,38 @@ import {
 
 @Injectable()
 export class MenuPreviewService {
-  constructor(private readonly orderability: OrderabilityService) {}
+  constructor(
+    private readonly orderability: OrderabilityService,
+    private readonly prisma: PrismaService,
+  ) {}
 
   async preview(employeeId: string) {
-    return this.serialize(
-      await this.orderability.loadMenu(employeeId, { scope: 'PREVIEW' }),
-    );
+    const menu = await this.orderability.loadMenu(employeeId, {
+      scope: 'PREVIEW',
+    });
+    return { ...this.serialize(menu), rules: await this.rules(menu) };
+  }
+
+  /** Why the preview looks the way it does (counts only; no hidden or unpriced items listed). */
+  private async rules(menu: OrderableMenu) {
+    const [tier, company] = await Promise.all([
+      this.prisma.priceTier.findUnique({
+        where: { id: menu.tierId },
+        select: { name: true },
+      }),
+      this.prisma.company.findUnique({
+        where: { id: menu.employee.companyId },
+        select: { priceTierId: true },
+      }),
+    ]);
+    return {
+      tierId: menu.tierId,
+      tierName: tier?.name ?? null,
+      usedDefaultTier: !company?.priceTierId,
+      hiddenCategoryCount: menu.hiddenCategoryCount,
+      hiddenDishCount: menu.hiddenDishCount,
+      unpricedDishCount: menu.unpricedDishIds.size,
+    };
   }
 
   async previewCategory(employeeId: string, slug: string) {

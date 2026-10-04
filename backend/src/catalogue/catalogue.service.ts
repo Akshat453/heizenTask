@@ -5,17 +5,14 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma, type PrismaClient } from '../generated/prisma/client.js';
-import {
-  PaginationQueryDto,
-  pageArgs,
-  paginate,
-} from '../common/dto/pagination-query.dto.js';
+import { pageArgs, paginate } from '../common/dto/pagination-query.dto.js';
 import { rethrowKnownPrismaError } from '../common/prisma-errors.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import type {
   CreateDishDto,
   CreateOptionDto,
   DishQueryDto,
+  OptionQueryDto,
   OptionGroupInputDto,
   UpdateDishDto,
   UpdateOptionDto,
@@ -52,6 +49,9 @@ export class CatalogueService {
       isActive: query.isActive,
       temperature: query.temperature,
       stationId: query.stationId,
+      ...(query.dietaryTagId && {
+        dietaryTags: { some: { dietaryTagId: query.dietaryTagId } },
+      }),
       ...(search
         ? {
             OR: [
@@ -207,10 +207,13 @@ export class CatalogueService {
     }
   }
 
-  async listOptions(query: PaginationQueryDto) {
-    const where: Prisma.OptionWhereInput = query.search
-      ? { name: { contains: query.search.trim(), mode: 'insensitive' } }
-      : {};
+  async listOptions(query: OptionQueryDto) {
+    const where: Prisma.OptionWhereInput = {
+      isActive: query.isActive,
+      ...(query.search && {
+        name: { contains: query.search.trim(), mode: 'insensitive' },
+      }),
+    };
     const [data, totalItems] = await this.prisma.$transaction([
       this.prisma.option.findMany({
         where,

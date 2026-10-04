@@ -49,3 +49,11 @@ export class ReplaceMenuItemsDto {
   @Type(() => MenuCategoryItemDto)
   items!: MenuCategoryItemDto[];
 }
+
+export class ReplaceHiddenCompaniesDto {
+  /** The complete set of companies that should hide the item (empty = shown to all). */
+  @IsArray()
+  @ArrayUnique()
+  @IsUUID('all', { each: true })
+  companyIds!: string[];
+}

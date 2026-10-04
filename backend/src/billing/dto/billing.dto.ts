@@ -14,7 +14,7 @@ export class CreateInvoiceDto {
   companyId: string;
 
   @IsArray()
-  @IsUUID(4, { each: true })
+  @IsUUID('all', { each: true })
   orderIds: string[];
 }
 

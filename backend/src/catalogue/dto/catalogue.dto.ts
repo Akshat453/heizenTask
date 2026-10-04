@@ -13,13 +13,19 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
+import { BooleanQuery } from '../../common/decorators/boolean-query.decorator.js';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto.js';
 import { Temperature } from '../../generated/prisma/enums.js';
 
 export class DishQueryDto extends PaginationQueryDto {
-  @IsOptional() @IsBoolean() @Type(() => Boolean) isActive?: boolean;
+  @BooleanQuery() isActive?: boolean;
   @IsOptional() @IsEnum(Temperature) temperature?: Temperature;
   @IsOptional() @IsUUID() stationId?: string;
+  @IsOptional() @IsUUID('all') dietaryTagId?: string;
+}
+
+export class OptionQueryDto extends PaginationQueryDto {
+  @BooleanQuery() isActive?: boolean;
 }
 
 export class OptionGroupOptionInputDto {
