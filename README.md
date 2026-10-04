@@ -313,10 +313,15 @@ Reseed at least every two weeks to keep 14 days of future data visible.
   - notifications;
   - date-scheduled menus;
   - exports;
-  - JWT revocation and sessions;
-  - a dedicated Orders UI in the frontend (orders are exercised through the API).
+  - JWT revocation and sessions.
 - **Planned Kitchen and dispatch times are derived, not stored.** A change to the Kitchen buffer setting therefore moves the deadlines of existing orders; the delivery lead time is snapshotted per order.
 - **Grouping after Kitchen work** runs after the Kitchen transaction commits, so Kitchen work is never lost. Failures are reported and repaired by the idempotent reconcile endpoint rather than a queue.
 - **Admin-only invoice creation; no credit notes.**
 - **Selector lists** request one page of 100 items. Reference data is small; a larger catalogue would need search-as-you-type selectors.
 - **Existing orders:** orders created before the business-time fix keep their stored `deliveryAt`; reseeding refreshes demo data.
+
+## Ambiguities and how they were interpreted
+
+- **Portion sizes are defined per option group**, with an extra charge per size. Every option in a group that sells in portions therefore supports all of that group's sizes by construction; there is no per-option list of supported sizes.
+- **Boolean filters** (`isActive`, `invoiced`) accept only `true`/`false`/`1`/`0`; anything else is a 400 rather than being guessed.
+- **"Missing a price"** counts active dishes or options that the same resolver the menu uses cannot price on a tier. A dish left off a preview because it is hidden or inactive is not counted as unpriced.

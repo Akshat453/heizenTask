@@ -4,3 +4,8 @@ AGENTS.md
 skills-lock.json
 CLAUDE.md
 docs/
+# Frontend agent guide and API map are project docs; keep them tracked.
+!frontend/AGENTS.md
+!frontend/docs/
+# QA screenshots stay local.
+frontend/docs/qa/
