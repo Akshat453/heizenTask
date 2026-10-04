@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { useAuth } from "@/components/auth/auth-provider";
 import { Button } from "@/components/ui/button";
 import {
+  Command,
   CommandDialog,
   CommandEmpty,
   CommandGroup,
@@ -86,6 +87,8 @@ export function CommandPalette() {
         <kbd className="num hidden rounded border bg-muted px-1 text-[11px] md:inline">⌘K</kbd>
       </Button>
       <CommandDialog open={open} onOpenChange={setOpen} title="Search Fernleaf" description="Jump to a page or find an order, company or employee.">
+        {/* cmdk needs a <Command> root; server results are already matched, and pages are filtered by `needle`. */}
+        <Command shouldFilter={false}>
         <CommandInput value={term} onValueChange={setTerm} placeholder="Type a page, order number, company or employee…" />
         <CommandList>
           {nothing && <CommandEmpty>No matches. Try an order number or a company name.</CommandEmpty>}
@@ -127,7 +130,7 @@ export function CommandPalette() {
           {data && data.employees.length > 0 && (
             <CommandGroup heading="Employees">
               {data.employees.map((e) => (
-                <CommandItem key={e.id} value={`employee:${e.id}`} onSelect={() => go(`/employees?search=${encodeURIComponent(e.name)}`)}>
+                <CommandItem key={e.id} value={`employee:${e.id}`} onSelect={() => go(`/employees/${e.id}`)}>
                   <User />
                   {e.name}
                   <span className="truncate text-muted-foreground">{e.company.name}</span>
@@ -136,6 +139,7 @@ export function CommandPalette() {
             </CommandGroup>
           )}
         </CommandList>
+        </Command>
       </CommandDialog>
     </>
   );

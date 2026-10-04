@@ -2,9 +2,30 @@
 
 Operations platform for a corporate-catering kitchen: companies and their employees, a priced menu, employee orders with cut-off, Kitchen preparation, Dispatch grouping, Driver delivery with optional photo proof, invoicing, and role dashboards.
 
+## Live demo
+
+| | URL |
+|---|---|
+| Frontend | https://fernleaf-kitchen-ten.vercel.app |
+| Backend API | https://heizentask.onrender.com |
+
+Sign in with any reviewer account; the password for all four is `Test@1234`.
+
+| Email | Role |
+|---|---|
+| `admin@test.com` | ADMIN |
+| `kitchen@test.com` | KITCHEN |
+| `dispatch@test.com` | DISPATCH |
+| `driver@test.com` | DRIVER |
+
+The backend runs on a free Render instance: the first request after a quiet period can take about a minute while it wakes up. If sign-in seems slow, wait and retry.
+
 ## Contents
 
+- [Live demo](#live-demo)
 - [Architecture](#architecture)
+- [Data model](#data-model)
+- [Key decisions and trade-offs](#key-decisions-and-trade-offs)
 - [Local setup](#local-setup)
 - [Environment variables](#environment-variables)
 - [Reviewer accounts](#reviewer-accounts)
@@ -14,6 +35,8 @@ Operations platform for a corporate-catering kitchen: companies and their employ
 - [Testing](#testing)
 - [Seed data](#seed-data)
 - [Scope and trade-offs](#scope-and-trade-offs)
+- [Prioritisation](#prioritisation)
+- [Ambiguities and how they were interpreted](#ambiguities-and-how-they-were-interpreted)
 
 ## Architecture
 
@@ -26,17 +49,96 @@ Browser ──► Next.js (App Router, client pages) ──HTTP/JSON──► Ne
 - **Authentication:** a JWT in an HttpOnly cookie (`heizen_access_token`). Global guards run `JwtAuthGuard` → `PermissionsGuard`, so an unauthenticated request gets 401 before a permission check can return 403. Endpoints declare `@RequirePermissions(...)`. Role names are used by the frontend for navigation only; the backend authorizes by permission.
 - **Concurrency safety** comes from PostgreSQL: row locks (`FOR UPDATE`), conditional updates for state transitions, unique and partial-unique indexes, and transaction-scoped advisory locks. The lock order is documented on `DeliveryGroupingService`.
 
-```text
-StaffUser ─ Role ─ Permission          (staff who operate the app)
-Company ─┬─ Employee (orders are placed for employees)
-         ├─ CompanyAddress / WorkingDay / Holiday / hidden menu items
-         └─ PriceTier (optional; otherwise the active default tier)
-Order ─ OrderLine ─ OrderCombination ─ OrderCombinationOption   (price/name snapshots)
-  │                        └─ PrepUnit (one per combination, created at confirmation)
-  ├─ OrderEvent (timeline)
-  ├─ DeliveryDrop (logistics grouping, driver, proof)
-  └─ InvoiceOrder ─ Invoice (immutable amounts)
+## Data model
+
+Main entities and relations (from `backend/prisma/schema.prisma`; join tables for allergens and dietary tags are omitted for readability).
+
+```mermaid
+erDiagram
+    Role ||--o{ RolePermission : grants
+    Permission ||--o{ RolePermission : "granted by"
+    Role ||--o{ StaffUser : has
+
+    Company ||--o{ CompanyDomain : owns
+    Company ||--o{ CompanyAddress : has
+    Company ||--o{ CompanyWorkingDay : "delivers on"
+    Company ||--o{ CompanyHoliday : "closed on"
+    Company ||--o{ Employee : employs
+    Company |o--o| Employee : "owner"
+    Company }o--o| PriceTier : "uses (else default)"
+    Company }o--|| PackagingType : "default packaging"
+    Company }o--o| StaffUser : "default driver"
+    Company ||--o{ CompanyHiddenCategory : hides
+    Company ||--o{ CompanyHiddenDish : hides
+    Employee }o--o| CompanyAddress : "default address"
+
+    KitchenStation ||--o{ Dish : prepares
+    Dish ||--o{ OptionGroup : has
+    OptionGroup ||--o{ OptionGroupOption : offers
+    Option ||--o{ OptionGroupOption : "offered in"
+    OptionGroup ||--o{ OptionGroupPortion : "sized by"
+    PortionSize ||--o{ OptionGroupPortion : "used in"
+    MenuCategory ||--o{ MenuCategoryItem : lists
+    Dish ||--o{ MenuCategoryItem : "listed as"
+    MenuCategory ||--o{ CompanyHiddenCategory : "hidden by"
+    Dish ||--o{ CompanyHiddenDish : "hidden by"
+
+    PriceTier |o--o{ PriceTier : "derives from"
+    PriceTier ||--o{ DishTierPrice : prices
+    PriceTier ||--o{ OptionTierPrice : prices
+    Dish ||--o{ DishTierPrice : "priced by"
+    Option ||--o{ OptionTierPrice : "priced by"
+
+    Employee ||--o{ Order : "ordered for"
+    Company ||--o{ Order : "billed to"
+    CompanyAddress ||--o{ Order : "delivered to"
+    Order ||--o{ OrderLine : contains
+    Dish ||--o{ OrderLine : "snapshot of"
+    OrderLine ||--o{ OrderCombination : "split into"
+    OrderCombination ||--o{ OrderCombinationOption : selects
+    Option ||--o{ OrderCombinationOption : "snapshot of"
+    PortionSize |o--o{ OrderCombinationOption : "sized"
+    Order ||--o{ OrderEvent : timeline
+    Order ||--o{ PrepUnit : "kitchen work"
+    OrderCombination ||--o| PrepUnit : "one per combination"
+    KitchenStation |o--o{ PrepUnit : "station snapshot"
+    DeliveryDrop |o--o{ Order : groups
+    StaffUser |o--o{ DeliveryDrop : drives
+    Company ||--o{ DeliveryDrop : "delivered to"
+    Invoice ||--o{ InvoiceOrder : lines
+    Order ||--o| InvoiceOrder : "invoiced once"
+    Company ||--o{ Invoice : "billed"
+
+    PlatformSettings {
+        string businessTimezone
+        time cutoffTime
+        int cutoffWorkingDayCount
+        int kitchenReadyBufferMinutes
+        int atRiskWindowMinutes
+    }
+    KitchenWorkingDay {
+        DayOfWeek dayOfWeek
+    }
+    KitchenHoliday {
+        date date
+    }
 ```
+
+`PlatformSettings` is a singleton (`id = 1`); `KitchenWorkingDay` and `KitchenHoliday` form the Kitchen calendar used only for cut-off.
+
+## Key decisions and trade-offs
+
+| Decision | Why |
+|---|---|
+| **NestJS feature modules** (orders, kitchen, dispatch, driver, billing, menu, pricing, …) | One authoritative place for every business rule; modules export only the services others need, so rules are not duplicated in the UI. |
+| **Prisma 7 + PostgreSQL on Neon** | Typed queries and committed, reviewable migrations; Neon gives a managed Postgres with separate branches for development and tests. Raw SQL is used only where Prisma cannot express an invariant (partial unique index, advisory locks), always parameterized. |
+| **JWT in an HttpOnly cookie + permission guard** | The token is never readable by JavaScript. `JwtAuthGuard` runs before `PermissionsGuard`, and endpoints require permissions (not role names), so roles can change without code changes. |
+| **TanStack Query + shadcn/ui (Base UI)** | Server state stays in the cache and is refetched/invalidated after every mutation; accessible primitives copied into the repo and themed with design tokens. |
+| **Cloudinary authenticated assets** for delivery proof | Photos are private; the database stores only a locator, and short-lived signed URLs are generated on demand for authorized callers. |
+| **Integer cents everywhere** | No floating-point money; derived prices use BigInt/integer basis points and round up to 5 cents. |
+| **Snapshots** on orders, lines, combinations and options | Later changes to dishes, prices, companies or stations never rewrite historical orders or invoices. |
+| **Row locks, conditional updates (CAS) and advisory locks** | Edit vs cut-off, Kitchen completion, Drop grouping, driver assignment, delivery and invoicing are serialized by PostgreSQL, so a lost race returns 409 instead of corrupting state. |
+| **Idempotent cut-off** | Re-running cut-off for a date skips already processed orders, so a retry or double click is safe. |
 
 ## Local setup
 
@@ -50,7 +152,11 @@ npm install
 npx prisma generate
 npx prisma migrate deploy        # applies committed migrations (never `db push` / `migrate reset`)
 npx prisma db seed               # deterministic reviewer data (safe to rerun)
+npx tsx prisma/verify-seed.ts    # read-only check of the seeded data
 npm run start:dev                # http://localhost:3001
+
+# Test database (separate, disposable; used only by e2e tests)
+npm run test:db:migrate          # guarded: refuses to run against DATABASE_URL / DIRECT_URL
 
 # Frontend
 cd ../frontend
@@ -102,7 +208,7 @@ All accounts use the password `Test@1234`.
 
 ### Business time
 
-- **Timezone:** every business date and time uses `PlatformSettings.businessTimezone`. The seed sets `Asia/Kolkata`. The server and browser timezones never matter.
+- **Timezone:** The kitchen runs in Asia/Kolkata (configurable in PlatformSettings). Cut-offs, delivery dates and 'today' are computed in that zone regardless of server or browser time zone. Every business date and time uses `PlatformSettings.businessTimezone`, which the seed sets to `Asia/Kolkata`.
 - **Delivery instant:** `deliveryAt` is built from the business-local delivery date plus the business-local time, in the configured timezone (Temporal).
 - **Date inputs:** dates must be strict `YYYY-MM-DD`; full timestamps are rejected.
 - **Calendars:** the Company calendar (working days and holidays) decides which dates a company accepts deliveries. The Kitchen calendar (Kitchen working days and Kitchen holidays) only drives cut-off.
@@ -210,6 +316,13 @@ A required option group with no usable choice makes the Dish unorderable. Secret
 - **Amounts:** `InvoiceOrder.amountCents = billableTotalCents` and `Invoice.totalCents = SUM(amounts)`. An order can be on at most one invoice, and invoices are immutable.
 - **Mark Paid** is conditional: the first paid timestamp is kept, and a second attempt returns 409.
 
+#### Invoiced orders that change
+
+Invoices are immutable: `InvoiceOrder.amountCents` is copied from `billableTotalCents` when the invoice is created, and no code path edits it afterwards.
+- **Admin override** (address, time or packaging on a PLACED or CONFIRMED order) never reprices, so `billableTotalCents` and any invoice line for the order stay as they are. Address or time changes are refused (409) once the order's Drop has left.
+- **Cancellation after confirmation** keeps `billableTotalCents` unchanged, so an invoiced order stays on its invoice at the same amount and remains billable; an uninvoiced one can still be invoiced. Cancellation is refused (409) once the Drop is out for delivery or delivered.
+- **Short delivery** is not modelled: a delivered Drop marks every attached confirmed order DELIVERED at its frozen amount. There are no credit notes or partial refunds; a correction would have to be handled outside the app (see [Prioritisation](#prioritisation)).
+
 ### Dashboards
 
 All metrics are computed by the backend; the frontend only formats them. Orders are grouped by **delivery date**; Drops by whether their scheduled delivery time falls on the **business date**. Missing counts are `0`; a missing "next" item is `null`. The tile tooltips use this exact wording (`frontend/src/lib/dashboard-definitions.ts`).
@@ -246,6 +359,13 @@ All metrics are computed by the backend; the frontend only formats them. Orders 
 | Driver | Remaining | Your drops today that are not delivered yet. |
 | Driver | Next stop | Your earliest drop today that is not delivered yet. |
 | Driver | On time / late | Among your delivered drops today: on time when `deliveredAt <= scheduledDeliveryAt`, otherwise late. |
+
+**Why each dashboard shows what it shows**
+
+- **Admin** — the whole operation at a glance: today's volume and billable value, money not yet invoiced, and anything blocked (late kitchen work, placed orders awaiting cut-off, active deliveries). Deliberately not shown: per-employee spend, revenue forecasts and payment collection, because invoicing ends at "paid" and there is no payment system.
+- **Kitchen** — only today's confirmed work and its deadlines, by prep-unit state and timing. Deliberately not shown: prices, billing and other days, because they do not change what the kitchen cooks next.
+- **Dispatch** — today's Drops by state, unassigned and late ones, and orders still waiting on the kitchen. Deliberately not shown: money and kitchen detail beyond "not ready yet".
+- **Driver** — only the signed-in driver's Drops for today (identity from the session, never a parameter). Deliberately not shown: other drivers' work, prices and future days.
 
 Supporting panels list rows from operational endpoints rather than new figures. The kitchen station-load and prep-totals panels group today's kitchen-board rows; the dispatch unassigned, departures and driver-load panels group today's drops; the admin "Needs attention" list links each item to where it is fixed. `GET /dispatch/drops` also returns `plannedDispatchReadyAt` per drop: scheduled delivery time minus the longest delivery lead snapshotted on its orders (computed, not stored).
 
@@ -307,6 +427,8 @@ npx tsx prisma/verify-seed.ts   # verify seeded data on the development database
 - **Migrations:** it runs `prisma migrate deploy` there.
 - **Fixtures:** tests create `TEST-*`-marked fixtures and delete only those rows, in foreign-key order. Suites run serially.
 
+**What is tested:** cut-off boundaries and idempotency, pricing resolution (overrides, strategies, rounding, cycles), combination counting and order validation, Kitchen state and timing, grouping, delivery and onTime, invoicing (eligibility, totals, double invoicing), dashboards, auth and permissions, and delivery-proof validation. Unit tests run without a database; e2e tests run against the guarded test database and work whether or not it also contains demo seed data.
+
 Concurrency guarantees are proven with independent PostgreSQL connections, not mocks:
 - edit vs cut-off;
 - final PrepUnit completion;
@@ -319,21 +441,19 @@ Against a remote database (about 250 ms round trip) the full e2e run takes about
 
 ## Seed data
 
-`npx prisma db seed` is deterministic (stable UUIDv5 IDs) and idempotent. A rerun updates seed-owned records in place and prunes non-seed children of seed orders. It never resets the database. Dates come from the business date at seed time (Asia/Kolkata):
+`npx prisma db seed` is deterministic (stable UUIDv5 IDs) and idempotent. Pure data and the date-relative plan live in `prisma/seed-data.ts`; `prisma/seed.ts` writes them. A rerun updates seed-owned records in place, prunes non-seed children of seed orders, and removes stale `DEMO-*` orders, invoices and emptied Drops from an earlier run (a demo order on a non-demo invoice is kept). It never resets the database. Dates come from the business date at seed time (Asia/Kolkata):
 
-- **History:** 7 days of delivered orders in driver-delivered Drops, with a mix of on-time and late deliveries.
-- **Today:** dispatch-ready, out-for-delivery and delivered Drops for `driver@test.com`.
-- **Future:** 28 calendar days, each with a confirmed, Kitchen-ready order in a dispatch-ready Drop assigned to `driver@test.com`.
-- **Scenarios:** all six order statuses, confirmed-then-cancelled, rejected, multi-combination and portion orders, unfinished Kitchen work, and paid and unpaid invoices.
+- **Master data:** 8 companies with different tiers (default, Enterprise percentage, Partner cost-multiplier), calendars, default drivers and menu hiding; 48 employees with varied permission flags, allergies and dietary tags; 9 dishes, 9 options, 4 stations, 4 menu categories (one secret).
+- **History:** 7 days of delivered orders in driver-delivered Drops (on-time and late), plus cancelled (after confirmation, and draft at cut-off) and rejected orders.
+- **Today:** a rich mixed day — draft and placed orders waiting for cut-off, confirmed orders with not-started, started and done prep on several stations, ready (grouped and unassigned), out-for-delivery and delivered Drops, several for `driver@test.com`.
+- **Next 28 days:** 3–8 orders a day across several companies for the next 14 days (2–3 a day after that), each day with at least two Drops (one for the demo driver), two stations and unfinished kitchen work. Draft and placed orders appear only while their cut-off is still ahead.
+- **Billing:** paid and unpaid invoices (several multi-order) per company, and uninvoiced billable orders. Prices use each company's tier.
 
-`prisma/verify-seed.ts` checks:
-- coverage relative to the **current** business date (each day from today to +14 has a driver-assigned delivery);
-- accounts, roles and permissions;
-- money, snapshots, combinations, PrepUnits, Drops and invoices;
-- calendar validity;
-- that seeded statuses match runtime semantics.
+Roughly 150–160 orders, ~90 Drops and 9–12 invoices, depending on the weekday the seed runs. Delivery proof photos are never seeded (`photoUrl` is null); a real one can be uploaded through the driver flow.
 
-Reseed at least every two weeks to keep 14 days of future data visible.
+`prisma/verify-seed.ts` (read-only) checks, relative to the **current** business date: counts, every order/Drop/prep status, today's richness and every day to +14, money and snapshot integrity, employee permission flags and menu hiding, one PrepUnit per confirmed combination, grouping and Drop invariants, cut-off validity of future drafts, and invoice reconciliation.
+
+Today's mixed scenario is tied to the day the seed runs; reseed shortly before a review session. The following 28 days stay useful without reseeding.
 
 ## Scope and trade-offs
 
@@ -350,6 +470,24 @@ Reseed at least every two weeks to keep 14 days of future data visible.
 - **Admin-only invoice creation; no credit notes.**
 - **Selector lists** request one page of 100 items. Reference data is small; a larger catalogue would need search-as-you-type selectors.
 - **Existing orders:** orders created before the business-time fix keep their stored `deliveryAt`; reseeding refreshes demo data.
+
+## Prioritisation
+
+**Built (all assignment areas):** catalogue with options, option groups and portions; menu with company hiding and secret categories; three pricing strategies with overrides; companies, addresses, calendars and employees; order builder with combinations, snapshots, edit and place; cut-off (manual, idempotent); Kitchen board and timing; Dispatch grouping, driver assignment and out-for-delivery; driver delivery with optional private photo proof; invoicing and mark paid; role dashboards; staff management; settings.
+
+**Skipped, and why:**
+- **CSV bulk import of employees** — no endpoint was built; single-employee create covers the workflow, and import needs validation and error reporting per row.
+- **Short delivery, credit notes and refunds** — out of scope for a non-payment system; invoices are immutable.
+- **Some list filters** (employees "has allergies", invoice date range, company default-driver column) — the API does not expose them yet.
+- **Automatic (scheduled) cut-off** — cut-off is run manually by an admin and is idempotent; a scheduler would be the next step.
+- **Browser-level QA** — verified by code review, type checks, builds and API-level tests; there is no automated browser test suite.
+
+**Next, with more time:** scheduled cut-off; CSV import; credit notes for short deliveries; a browser test suite (Playwright) for the reviewer flows; search-as-you-type selectors for large catalogues.
+
+**Known limitations:**
+- The free Render backend sleeps when idle; the first request can take about a minute.
+- Seed data has no proof photos; today's richest scenario is the seed day (reseed to refresh).
+- Planned kitchen and dispatch times are derived from the current Kitchen buffer setting, so changing it moves existing deadlines.
 
 ## Ambiguities and how they were interpreted
 
