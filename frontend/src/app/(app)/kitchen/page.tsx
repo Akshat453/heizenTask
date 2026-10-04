@@ -1,211 +1,110 @@
 "use client";
 
-import { format } from "date-fns";
-import { useEffect, useState } from "react";
-import { apiRequest } from "@/lib/api-client";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { toast } from "sonner";
+import { ChefHat, Eye, RotateCw } from "lucide-react";
+import { useEffect, useMemo } from "react";
+import { EmptyState } from "@/components/app/empty-state";
+import { ErrorState } from "@/components/app/error-state";
+import { PageHeader } from "@/components/app/page-header";
 import { useAuth } from "@/components/auth/auth-provider";
-
-type KitchenPrepState = "NOT_STARTED" | "STARTED" | "DONE";
-type KitchenTimingState = "ON_TRACK" | "AT_RISK" | "LATE" | "COMPLETE";
-
-interface KitchenBoardItem {
-  id: string;
-  orderId: string;
-  orderNumber: string;
-  companyName: string;
-  employeeName: string;
-  deliveryDate: string;
-  deliveryAt: string;
-  plannedKitchenReadyAt: string;
-  
-  dishNameSnapshot: string;
-  quantity: number;
-  stationId: string | null;
-  stationNameSnapshot: string;
-  options: {
-    optionGroupNameSnapshot: string;
-    optionNameSnapshot: string;
-    portionNameSnapshot: string | null;
-  }[];
-
-  startedAt: string | null;
-  doneAt: string | null;
-
-  prepState: KitchenPrepState;
-  timingState: KitchenTimingState;
-}
+import { boardTotals, filterUnits, prepTotalRows, stationTabs } from "@/components/kitchen/board-model";
+import { ByUnitView } from "@/components/kitchen/by-unit-view";
+import { KitchenHeader } from "@/components/kitchen/kitchen-header";
+import { PrepTotalsView } from "@/components/kitchen/prep-totals-view";
+import { BOARD_REFRESH_MS, useKitchenBoard } from "@/components/kitchen/queries";
+import { SummaryStrip } from "@/components/kitchen/summary-strip";
+import { useKitchenParams } from "@/components/kitchen/use-kitchen-params";
+import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useBusinessClock } from "@/hooks/use-business-clock";
+import { useNow } from "@/hooks/use-now";
+import { P } from "@/lib/permissions";
+import { cn } from "@/lib/utils";
 
 export default function KitchenBoardPage() {
   const { can } = useAuth();
-  
-  // Local calendar date (not the UTC date from toISOString); the API applies the business timezone.
-  const [date, setDate] = useState<string>(format(new Date(), "yyyy-MM-dd"));
-  const [stationId, setStationId] = useState<string>("all");
-  const [items, setItems] = useState<KitchenBoardItem[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  
-  const hasUpdatePerm = can("kitchen.update");
-  const hasForceCompletePerm = can("kitchen.force_complete");
+  const { businessDate: today, timeZone, nowMs } = useBusinessClock();
+  const kitchen = useKitchenParams(today);
+  const { params, setParams, date, filters } = kitchen;
+  const board = useKitchenBoard(date);
+  const now = useNow(5_000);
+  const canUpdate = can(P.kitchenUpdate);
 
-  const loadData = async () => {
-    setIsLoading(true);
-    try {
-      const url = new URL("/kitchen", window.location.origin);
-      url.searchParams.set("date", date);
-      if (stationId !== "all") {
-        url.searchParams.set("stationId", stationId);
-      }
-      const data = await apiRequest<KitchenBoardItem[]>(`${url.pathname}${url.search}`);
-      setItems(data);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to load kitchen board");
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
+  // Esc leaves wall mode.
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    loadData();
-    const interval = setInterval(loadData, 30000); // Poll every 30s
-    return () => clearInterval(interval);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [date, stationId]);
+    if (!params.wall) return;
+    const onKey = (event: KeyboardEvent) => event.key === "Escape" && void setParams({ wall: null });
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [params.wall, setParams]);
 
-  const handleStart = async (id: string) => {
-    try {
-      await apiRequest(`/kitchen/prep-units/${id}/start`, { method: "POST" });
-      loadData();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to start unit");
-    }
-  };
+  const units = board.data;
+  const tabs = useMemo(() => stationTabs(units ?? []), [units]);
+  const visible = useMemo(() => filterUnits(units ?? [], filters), [units, filters]);
+  const totals = useMemo(() => boardTotals(visible), [visible]);
+  const totalsRows = useMemo(() => prepTotalRows(filterUnits(units ?? [], { ...filters, combo: null })), [units, filters]);
+  const updatedAgo = board.dataUpdatedAt && now ? Math.max(0, Math.round((now - board.dataUpdatedAt) / 1000)) : null;
 
-  const handleDone = async (id: string) => {
-    try {
-      await apiRequest(`/kitchen/prep-units/${id}/done`, { method: "POST" });
-      loadData();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to complete unit");
-    }
-  };
-
-  const handleForceComplete = async (orderId: string) => {
-    if (!confirm("Are you sure you want to force complete this order?")) return;
-    try {
-      await apiRequest(`/kitchen/orders/${orderId}/force-complete`, { method: "POST" });
-      loadData();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to force complete order");
-    }
-  };
-
-  const cols = {
-    NOT_STARTED: items.filter(i => i.prepState === "NOT_STARTED"),
-    STARTED: items.filter(i => i.prepState === "STARTED"),
-    DONE: items.filter(i => i.prepState === "DONE"),
-  };
-
-  const renderCard = (item: KitchenBoardItem) => (
-    <div key={item.id} className="bg-card border p-4 rounded-lg shadow-sm space-y-3">
-      <div className="flex justify-between items-start">
-        <div>
-          <p className="text-xs text-muted-foreground font-mono">{item.orderNumber}</p>
-          <p className="font-semibold">{item.quantity}x {item.dishNameSnapshot}</p>
-        </div>
-        <div className={`text-xs px-2 py-1 rounded-full font-medium
-          ${item.timingState === 'ON_TRACK' ? 'bg-success-soft text-success' : ''}
-          ${item.timingState === 'AT_RISK' ? 'bg-warning-soft text-warning' : ''}
-          ${item.timingState === 'LATE' ? 'bg-danger-soft text-danger' : ''}
-          ${item.timingState === 'COMPLETE' ? 'bg-neutral-soft text-neutral' : ''}
-        `}>
-          {item.timingState}
-        </div>
-      </div>
-      
-      <div className="text-sm text-muted-foreground">
-        <p>{item.stationNameSnapshot || "Unassigned Station"}</p>
-        <p>{new Date(item.plannedKitchenReadyAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+  const body = (
+    <div className={cn("flex flex-col gap-4", params.wall ? "text-[18px]" : "text-[16px]")}>
+      <KitchenHeader {...kitchen} today={today} tabs={tabs} allRemaining={tabs.reduce((s, t) => s + t.remaining, 0)} />
+      <div className={cn("sticky z-10 -mx-1 bg-background px-1 pb-1", params.wall ? "top-0" : "top-14")}>
+        <SummaryStrip totals={totals} timeZone={timeZone} nowMs={nowMs} />
+        <p className="mt-1 flex items-center gap-2 text-[0.75em] text-muted-foreground">
+          {!canUpdate && (
+            <span className="inline-flex items-center gap-1 rounded-md border bg-neutral-soft px-1.5 text-neutral">
+              <Eye className="size-3" /> View only
+            </span>
+          )}
+          {updatedAgo !== null && <span>Updated {updatedAgo < 5 ? "just now" : `${updatedAgo} s ago`} · refreshes every {BOARD_REFRESH_MS / 1000} s</span>}
+          <Button variant="ghost" size="icon-xs" aria-label="Refresh board" disabled={board.isFetching} onClick={() => void board.refetch()}>
+            <RotateCw className={cn(board.isFetching && "animate-spin")} />
+          </Button>
+        </p>
       </div>
 
-      {item.options.length > 0 && (
-        <ul className="text-xs text-muted-foreground list-disc list-inside">
-          {item.options.map((opt, idx) => (
-            <li key={idx}>{opt.optionNameSnapshot} {opt.portionNameSnapshot ? `(${opt.portionNameSnapshot})` : ''}</li>
+      {board.isLoading || !date ? (
+        <div className="grid gap-4 lg:grid-cols-3" aria-busy="true">
+          {Array.from({ length: 3 }, (_, i) => (
+            <div key={i} className="flex flex-col gap-3">
+              <Skeleton className="h-6 w-32" />
+              <Skeleton className="h-48" />
+              <Skeleton className="h-48" />
+            </div>
           ))}
-        </ul>
+        </div>
+      ) : board.error ? (
+        <ErrorState error={board.error} title="Could not load the kitchen board" onRetry={() => void board.refetch()} isRetrying={board.isFetching} />
+      ) : (units ?? []).length === 0 ? (
+        <EmptyState icon={ChefHat} title="No prep units for this day" description="Units appear once orders for this date are confirmed at cut-off. Try another day." />
+      ) : params.view === "totals" ? (
+        <PrepTotalsView rows={totalsRows} timeZone={timeZone} onSelect={(combo) => void setParams({ combo, view: null })} />
+      ) : (
+        <ByUnitView
+          date={date}
+          units={visible}
+          allUnits={units ?? []}
+          timeZone={timeZone}
+          nowMs={nowMs}
+          showStation={!params.station}
+          canUpdate={canUpdate}
+          canForce={can(P.kitchenForceComplete)}
+          columnHeight={params.wall ? "h-[70dvh] lg:h-[calc(100dvh-19rem)]" : "h-[70dvh] lg:h-[calc(100dvh-24rem)]"}
+        />
       )}
-
-      <div className="flex gap-2 pt-2">
-        {item.prepState === "NOT_STARTED" && hasUpdatePerm && (
-          <Button size="sm" onClick={() => handleStart(item.id)} className="w-full">Start</Button>
-        )}
-        {item.prepState !== "DONE" && hasUpdatePerm && (
-          <Button size="sm" onClick={() => handleDone(item.id)} variant={item.prepState === "NOT_STARTED" ? "outline" : "default"} className="w-full">Done</Button>
-        )}
-        {hasForceCompletePerm && item.prepState !== "DONE" && (
-          <Button size="sm" variant="destructive" onClick={() => handleForceComplete(item.orderId)} className="w-full">Force</Button>
-        )}
-      </div>
     </div>
   );
 
+  if (params.wall)
+    return (
+      <div role="dialog" aria-modal="true" aria-label="Kitchen board, wall mode" className="fixed inset-0 z-50 overflow-y-auto bg-background p-4 lg:p-6">
+        {body}
+      </div>
+    );
+
   return (
-    <div className="p-6 max-w-7xl mx-auto space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Kitchen Board</h1>
-        <div className="flex gap-4 items-center">
-          <Input 
-            type="date" 
-            value={date} 
-            onChange={e => setDate(e.target.value)} 
-            className="w-40"
-          />
-          <Select value={stationId || ""} onValueChange={(val) => setStationId(val || "all")}>
-            <SelectTrigger className="w-48">
-              <SelectValue placeholder="Filter Station" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Stations</SelectItem>
-              <SelectItem value="unassigned">Unassigned</SelectItem>
-              {/* In a real app we would load active stations here */}
-            </SelectContent>
-          </Select>
-          <Button onClick={loadData} variant="outline" disabled={isLoading}>
-            {isLoading ? "..." : "Refresh"}
-          </Button>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        {/* NOT STARTED */}
-        <div className="space-y-4">
-          <h2 className="font-semibold bg-neutral-soft p-2 rounded text-center">To Do ({cols.NOT_STARTED.length})</h2>
-          <div className="space-y-4">
-            {cols.NOT_STARTED.map(renderCard)}
-          </div>
-        </div>
-
-        {/* STARTED */}
-        <div className="space-y-4">
-          <h2 className="font-semibold bg-info-soft text-info p-2 rounded text-center">In Progress ({cols.STARTED.length})</h2>
-          <div className="space-y-4">
-            {cols.STARTED.map(renderCard)}
-          </div>
-        </div>
-
-        {/* DONE */}
-        <div className="space-y-4">
-          <h2 className="font-semibold bg-success-soft text-success p-2 rounded text-center">Done ({cols.DONE.length})</h2>
-          <div className="space-y-4">
-            {cols.DONE.map(renderCard)}
-          </div>
-        </div>
-      </div>
-    </div>
+    <main className="flex flex-col gap-4 p-4 md:p-6">
+      <PageHeader title="Kitchen board" description="Prep units for confirmed orders. Timing comes from the server; colours change at its thresholds." />
+      {body}
+    </main>
   );
 }

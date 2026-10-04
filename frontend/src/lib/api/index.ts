@@ -222,9 +222,17 @@ function toQuery(params: Record<string, string | number | boolean | undefined>):
   return qs.toString();
 }
 
+export type KitchenTransition = {
+  success: true; orderId: string; kitchenReady: boolean;
+  dispatch: { status: "NOT_READY" | "GROUPED" | "FAILED"; dropId?: string; recovery?: string };
+};
+
 export const kitchenApi = {
   board: (date: string, stationId?: string) =>
     apiRequest<KitchenBoardUnit[]>(`/kitchen?${toQuery({ date, stationId })}`),
+  start: (prepUnitId: string) => apiRequest<KitchenTransition>(`/kitchen/prep-units/${prepUnitId}/start`, { method: "POST" }),
+  done: (prepUnitId: string) => apiRequest<KitchenTransition>(`/kitchen/prep-units/${prepUnitId}/done`, { method: "POST" }),
+  forceComplete: (orderId: string) => apiRequest<KitchenTransition>(`/kitchen/orders/${orderId}/force-complete`, { method: "POST" }),
 };
 
 export const ordersApi = {

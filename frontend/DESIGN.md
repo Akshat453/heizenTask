@@ -123,6 +123,14 @@ The backend enum is always `OUT_FOR_DELIVERY`; only the label reads "Out for del
 - `src/lib/query-client.ts`: `createQueryClient`, `loginUrl`, `safeNextPath`.
 - Query keys use one factory per feature, for example `orderKeys.list(filters)`.
 
-## 10. Copy
+## 10. Kitchen board conventions
+
+- One `GET /kitchen?date=` per date, refetched every 20 s and on focus. Station tabs, state/timing filters, search and prep totals are computed in memory from that one response; every column is virtualized.
+- `prepState` and `timingState` are used exactly as the API returns them. The only display-only derivation is the minutes in the badge text: "Late by N min" = server-adjusted now (`useBusinessClock`) − `plannedKitchenReadyAt`, and "At risk · N min left" = `plannedKitchenReadyAt` − now. The state itself never changes in the browser until the next refetch; planned times are never edited in the UI.
+- Card stripe: 4px `bg-danger` (late) or `bg-warning` (at risk), always paired with the badge text, so colour is never the only signal.
+- Start/Done are optimistic (the card moves at once) and roll back on error. A 409 shows "Already updated by someone else" and refetches. Actions need `kitchen.update`; force complete needs `kitchen.force_complete`; anyone else sees the board read-only.
+- Wall mode (`?wall=1`): full-screen overlay without sidebar and top bar, 18px base size (card type scales in `em`), auto-refresh continues, Esc exits.
+
+## 11. Copy
 
 Buttons say exactly what happens ("Place order", "Mark out for delivery", "Create invoice"). Toasts use the past tense. Confirm dialogs state the consequence in plain words. Use staff vocabulary: order, drop, prep unit, cut-off, tier, station, invoice.
