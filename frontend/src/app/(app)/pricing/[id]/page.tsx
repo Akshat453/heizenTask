@@ -69,7 +69,7 @@ export default function TierEditorPage() {
   const visible = allRows.filter(
     (r) =>
       (!q || r.item.name.toLowerCase().includes(q) || (r.item.sku ?? "").toLowerCase().includes(q)) &&
-      (!filters.missing || r.item.priceCents === null) &&
+      (!filters.missing || r.item.effectiveCents === null) &&
       (!filters.overrides || sourceOf(r.item) === "OVERRIDE") &&
       (!categoryDishes || (r.kind === "dish" && categoryDishes.has(r.item.id))),
   );
@@ -165,7 +165,7 @@ export default function TierEditorPage() {
       ) : (
         <>
           {dishRows.length > 0 && <EditorGrid title="Dishes" rows={dishRows} edits={edits} errors={rowErrors} readOnly={readOnly} onEdit={onEdit} />}
-          {optionRows.length > 0 && <EditorGrid title="Options" rows={optionRows} edits={edits} errors={rowErrors} readOnly={readOnly} onEdit={onEdit} />}
+          {optionRows.length > 0 && <EditorGrid title="Options" subtitle="Options are priced once per tier and shared by every dish that offers them." rows={optionRows} edits={edits} errors={rowErrors} readOnly={readOnly} onEdit={onEdit} />}
         </>
       )}
       {!readOnly && (

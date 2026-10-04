@@ -26,15 +26,6 @@ export default function PricingPage() {
   const [creating, setCreating] = useState(false);
   const [makeDefault, setMakeDefault] = useState<PriceTier | null>(null);
   const tiers = useQuery({ queryKey: pricingKeys.tiers(), queryFn: pricingApi.listTiers });
-  // Missing-price counts come from each tier's editor (the list has no such field; backend gap).
-  const missing = useQuery({
-    queryKey: pricingKeys.missing(),
-    enabled: Boolean(tiers.data),
-    queryFn: async () => {
-      const editors = await Promise.all(tiers.data!.map((t) => pricingApi.getTierEditor(t.id)));
-      return new Map(editors.map((e) => [e.tier.id, e.dishes.filter((d) => d.isActive && d.priceCents === null).length]));
-    },
-  });
   const setDefault = useMutation({
     mutationFn: (tier: PriceTier) => pricingApi.updateTier(tier.id, { isDefault: true }),
     onSuccess: (_r, tier) => toast.success(`${tier.name} is now the default tier`),
@@ -62,7 +53,12 @@ export default function PricingPage() {
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {list.map((tier) => {
-            const gaps = missing.data?.get(tier.id) ?? 0;
+            const dishGaps = tier.missingDishCount;
+            const optionGaps = tier.missingOptionCount;
+            const gapText = [
+              dishGaps ? `${dishGaps} dish${dishGaps === 1 ? "" : "es"}` : null,
+              optionGaps ? `${optionGaps} option${optionGaps === 1 ? "" : "s"}` : null,
+            ].filter(Boolean).join(" and ");
             return (
               <article key={tier.id} className="flex flex-col gap-3 rounded-lg border bg-card p-4">
                 <div className="flex items-start justify-between gap-2">
@@ -76,10 +72,14 @@ export default function PricingPage() {
                   {!tier.isActive && <span className="rounded-md border bg-neutral-soft px-1.5 py-0.5 text-neutral">Inactive</span>}
                 </div>
                 <p className="text-sm text-muted-foreground"><span className="num">{formatCount(tier._count.companies)}</span> compan{tier._count.companies === 1 ? "y" : "ies"} on this tier</p>
-                {missing.isLoading ? <Skeleton className="h-4 w-40" /> : gaps > 0 ? (
-                  <p className="flex items-center gap-1 text-sm font-medium text-danger"><TriangleAlert className="size-3.5" aria-hidden /> {gaps} dish{gaps === 1 ? "" : "es"} missing a price</p>
+                {dishGaps === null ? (
+                  <p className="text-sm text-warning">Prices cannot be resolved: check the tier&apos;s source tier.</p>
+                ) : gapText ? (
+                  <Link href={`/pricing/${tier.id}?missing=true`} className="flex items-center gap-1 text-sm font-medium text-danger hover:underline">
+                    <TriangleAlert className="size-3.5" aria-hidden /> {gapText} missing a price
+                  </Link>
                 ) : (
-                  <p className="text-sm text-success">Every active dish is priced</p>
+                  <p className="text-sm text-success">Every active dish and option is priced</p>
                 )}
                 <div className="mt-auto flex gap-2 pt-1">
                   <Button size="sm" variant="outline" render={<Link href={`/pricing/${tier.id}`} />} nativeButton={false}>Open editor</Button>

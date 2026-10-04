@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { KeyRound, UserSearch } from "lucide-react";
 import { parseAsString, useQueryStates } from "nuqs";
+import Link from "next/link";
 import { useState } from "react";
 import { EmptyState } from "@/components/app/empty-state";
 import { EntityCombobox } from "@/components/app/entity-combobox";
@@ -14,7 +15,7 @@ import { PreviewPhone } from "@/components/menu/preview-phone";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { companiesApi, employeesApi, pricingApi } from "@/lib/api";
+import { employeesApi, pricingApi } from "@/lib/api";
 import { P } from "@/lib/permissions";
 
 export default function MenuPreviewPage() {
@@ -22,11 +23,6 @@ export default function MenuPreviewPage() {
   const [params, setParams] = useQueryStates({ employee: parseAsString, slug: parseAsString }, { history: "replace" });
   const [slugText, setSlugText] = useState(params.slug ?? "");
   const employee = useQuery({ queryKey: ["employees", "detail", params.employee], queryFn: () => employeesApi.get(params.employee!), enabled: Boolean(params.employee) });
-  const company = useQuery({
-    queryKey: ["companies", "detail", employee.data?.company.id],
-    queryFn: () => companiesApi.get(employee.data!.company.id),
-    enabled: Boolean(employee.data) && can(P.companiesRead),
-  });
   const tiers = useQuery({ queryKey: ["pricing", "tiers"], queryFn: pricingApi.listTiers, enabled: can(P.pricingRead) });
   const menu = useQuery({
     queryKey: ["employees", "menu-preview", params.employee, params.slug],
@@ -88,24 +84,45 @@ export default function MenuPreviewPage() {
           <PreviewPhone menu={menu.data} />
           <Panel title="Rules applied">
             <ul className="flex flex-col gap-2 text-sm">
-              <li>
-                <span className="text-muted-foreground">Price tier:</span> {tierName}
-              </li>
-              {company.data && (
+              {menu.data.rules ? (
                 <>
                   <li>
-                    <span className="text-muted-foreground">Categories hidden for {company.data.name}:</span> <span className="num">{company.data.hiddenCategories.length}</span>
+                    <span className="text-muted-foreground">Price tier:</span>{" "}
+                    {can(P.pricingRead) ? (
+                      <Link href={`/pricing/${menu.data.rules.tierId}`} className="text-primary hover:underline">{menu.data.rules.tierName}</Link>
+                    ) : (
+                      menu.data.rules.tierName
+                    )}
+                    {menu.data.rules.usedDefaultTier && <span className="ml-1 rounded border bg-secondary px-1 text-xs">Default tier</span>}
                   </li>
                   <li>
-                    <span className="text-muted-foreground">Dishes hidden for {company.data.name}:</span> <span className="num">{company.data.hiddenDishes.length}</span>
+                    <span className="text-muted-foreground">Hidden for this company:</span>{" "}
+                    <span className="num">{menu.data.rules.hiddenCategoryCount}</span> categor{menu.data.rules.hiddenCategoryCount === 1 ? "y" : "ies"},{" "}
+                    <span className="num">{menu.data.rules.hiddenDishCount}</span> dish{menu.data.rules.hiddenDishCount === 1 ? "" : "es"}
+                  </li>
+                  <li className={menu.data.rules.unpricedDishCount ? "text-danger" : "text-muted-foreground"}>
+                    {menu.data.rules.unpricedDishCount ? (
+                      can(P.pricingRead) ? (
+                        <Link href={`/pricing/${menu.data.rules.tierId}?missing=true`} className="hover:underline">
+                          {menu.data.rules.unpricedDishCount} dish{menu.data.rules.unpricedDishCount === 1 ? "" : "es"} not shown because they have no price on this tier
+                        </Link>
+                      ) : (
+                        `${menu.data.rules.unpricedDishCount} dish${menu.data.rules.unpricedDishCount === 1 ? "" : "es"} not shown because they have no price on this tier`
+                      )
+                    ) : (
+                      "Every visible dish has a price on this tier."
+                    )}
                   </li>
                 </>
+              ) : (
+                <li>
+                  <span className="text-muted-foreground">Price tier:</span> {tierName}
+                </li>
               )}
               <li className="text-muted-foreground">
                 {params.slug ? "Opened by link: a secret category still respects activity, hiding and pricing." : "Secret categories are left out of the normal menu."}
               </li>
-              <li className="text-muted-foreground">Dishes without a price on this tier, and inactive categories, items, dishes or options, are left out. Allergy warnings never block ordering.</li>
-              <li className="text-muted-foreground">Menus are not date-scheduled, so the delivery date does not change this view.</li>
+              <li className="text-muted-foreground">Allergy warnings never block ordering. Menus are not date-scheduled.</li>
             </ul>
           </Panel>
         </div>

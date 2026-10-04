@@ -59,7 +59,7 @@ const columns: ColumnDef<DishListItem, unknown>[] = [
   },
 ];
 
-const parsers = { q: parseAsString, active: parseAsString, station: parseAsString, temp: parseAsString, page: parseAsInteger.withDefault(1), size: parseAsInteger.withDefault(25) };
+const parsers = { q: parseAsString, active: parseAsString, station: parseAsString, temp: parseAsString, tag: parseAsString, page: parseAsInteger.withDefault(1), size: parseAsInteger.withDefault(25) };
 
 export function DishesTab({ action }: { action?: React.ReactNode }) {
   const router = useRouter();
@@ -69,8 +69,8 @@ export function DishesTab({ action }: { action?: React.ReactNode }) {
     page: params.page,
     pageSize: params.size,
     search: params.q ?? undefined,
-    // Only isActive=true is sent: the API turns "false" into true (backend gap).
-    isActive: params.active === "yes" ? (true as const) : undefined,
+    isActive: params.active === "active" ? true : params.active === "inactive" ? false : undefined,
+    dietaryTagId: params.tag ?? undefined,
     stationId: params.station ?? undefined,
     temperature: params.temp === "HOT" ? ("HOT" as const) : params.temp === "COLD" ? ("COLD" as const) : undefined,
   };
@@ -94,9 +94,10 @@ export function DishesTab({ action }: { action?: React.ReactNode }) {
             searchKey="q"
             searchPlaceholder="Dish name or SKU"
             filters={[
-              { key: "active", label: "Status", options: [{ value: "yes", label: "Active only" }] },
+              { key: "active", label: "Status", options: [{ value: "active", label: "Active" }, { value: "inactive", label: "Inactive" }] },
               { key: "station", label: "Station", options: (ref.stations.data ?? []).map((s) => ({ value: s.id, label: s.name })) },
               { key: "temp", label: "Temperature", options: [{ value: "HOT", label: "Hot" }, { value: "COLD", label: "Cold" }] },
+              { key: "tag", label: "Dietary tag", options: (ref.dietaryTags.data ?? []).map((t) => ({ value: t.id, label: t.name })) },
             ]}
           />
           {action}

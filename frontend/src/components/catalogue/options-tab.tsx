@@ -22,12 +22,17 @@ const columns: ColumnDef<Option, unknown>[] = [
   { id: "active", header: "Status", meta: { align: "center" }, cell: ({ row }) => <StatusBadge kind="active" value={row.original.isActive ? "ACTIVE" : "INACTIVE"} size="sm" /> },
 ];
 
-const parsers = { oq: parseAsString, opage: parseAsInteger.withDefault(1), osize: parseAsInteger.withDefault(25) };
+const parsers = { oq: parseAsString, oactive: parseAsString, opage: parseAsInteger.withDefault(1), osize: parseAsInteger.withDefault(25) };
 
 export function OptionsTab({ action }: { action?: ReactNode }) {
   const router = useRouter();
   const [params, setParams] = useQueryStates(parsers, { history: "replace" });
-  const query = { page: params.opage, pageSize: params.osize, search: params.oq ?? undefined };
+  const query = {
+    page: params.opage,
+    pageSize: params.osize,
+    search: params.oq ?? undefined,
+    isActive: params.oactive === "active" ? true : params.oactive === "inactive" ? false : undefined,
+  };
   const options = useQuery({ queryKey: catalogueKeys.options(query), queryFn: () => catalogueApi.searchOptions(query), placeholderData: (p) => p });
   return (
     <DataTable
@@ -43,7 +48,12 @@ export function OptionsTab({ action }: { action?: ReactNode }) {
       onRetry={() => void options.refetch()}
       toolbar={
         <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-          <FilterBar searchKey="oq" pageKey="opage" searchPlaceholder="Option name" />
+          <FilterBar
+            searchKey="oq"
+            pageKey="opage"
+            searchPlaceholder="Option name"
+            filters={[{ key: "oactive", label: "Status", options: [{ value: "active", label: "Active" }, { value: "inactive", label: "Inactive" }] }]}
+          />
           {action}
         </div>
       }

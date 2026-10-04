@@ -14,7 +14,7 @@ import { useAuth } from "@/components/auth/auth-provider";
 import { CategoryList } from "@/components/menu/category-list";
 import { CategoryPanel } from "@/components/menu/category-panel";
 import { NewCategoryDialog } from "@/components/menu/new-category-dialog";
-import { menuKeys, useCategories, useHidingIndex } from "@/components/menu/queries";
+import { menuKeys, useCategories } from "@/components/menu/queries";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { menuApi, type MenuCategory, type MenuCategorySummary } from "@/lib/api";
@@ -23,17 +23,17 @@ import { P } from "@/lib/permissions";
 
 /** Remounts the panel only when the server copy really changes (not on every refetch). */
 const categorySignature = (c: MenuCategory) =>
-  JSON.stringify([c.id, c.name, c.slug, c.isSecret, c.items.map((i) => [i.dishId, i.displayOrder, i.isActive])]);
+  JSON.stringify([c.id, c.name, c.slug, c.isSecret, c.hiddenByCompanyIds, c.items.map((i) => [i.dishId, i.displayOrder, i.isActive, i.hiddenByCompanyIds])]);
 
 export default function MenuPage() {
   const { can } = useAuth();
   const queryClient = useQueryClient();
   const categories = useCategories();
-  const hiding = useHidingIndex();
   const [selected, setSelected] = useQueryState("category", parseAsString);
   const [creating, setCreating] = useState(false);
   const canManage = can(P.catalogueManage);
-  const canHide = can(P.companiesManage) && Boolean(hiding.data);
+  // The hiding routes need catalogue.manage; the picker lists companies (companies.read).
+  const canHide = canManage && can(P.companiesRead);
   const sorted = [...(categories.data ?? [])].sort((a, b) => a.displayOrder - b.displayOrder || a.name.localeCompare(b.name));
   const currentId = (sorted.find((c) => c.id === selected) ?? sorted[0])?.id;
   // List rows only carry counts; the selected category's items come from its detail.
@@ -90,7 +90,6 @@ export default function MenuPage() {
           <CategoryList
             categories={sorted}
             selectedId={currentId ?? null}
-            hiding={hiding.data}
             canManage={canManage}
             pending={reorder.isPending || toggle.isPending}
             onSelect={(id) => void setSelected(id)}
@@ -102,7 +101,7 @@ export default function MenuPage() {
           ) : detail.error ? (
             <ErrorState error={detail.error} title="Could not load this category" onRetry={() => void detail.refetch()} />
           ) : detail.data ? (
-            <CategoryPanel key={categorySignature(detail.data)} category={detail.data} hiding={hiding.data} canManage={canManage} canHide={canHide} />
+            <CategoryPanel key={categorySignature(detail.data)} category={detail.data} canManage={canManage} canHide={canHide} />
           ) : null}
         </div>
       )}

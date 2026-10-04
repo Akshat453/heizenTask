@@ -45,6 +45,8 @@ import type {
   PriceTierWriteInput,
   TierEditor,
   PriceOverride,
+  PriceTierListItem,
+  ItemTierPrice,
 } from "./types";
 
 export * from "./types";
@@ -91,7 +93,7 @@ export const referenceDataApi = {
 // ─── Catalogue ──────────────────────────────────────────────────────────────
 
 export const catalogueApi = {
-  listDishes: (params: { page?: number; pageSize?: number; search?: string; isActive?: true; temperature?: "HOT" | "COLD"; stationId?: string } = {}) =>
+  listDishes: (params: { page?: number; pageSize?: number; search?: string; isActive?: boolean; temperature?: "HOT" | "COLD"; stationId?: string; dietaryTagId?: string } = {}) =>
     apiRequest<PaginatedResponse<DishListItem>>(`/dishes?${toQuery(params)}`),
   getDish: (id: string) => apiRequest<Dish>(`/dishes/${id}`),
   createDish: (body: DishWriteInput) => apiRequest<Dish>("/dishes", { method: "POST", body: JSON.stringify(body) }),
@@ -100,8 +102,10 @@ export const catalogueApi = {
   /** Reactivation is a normal update (isActive is part of the dish DTO). */
   reactivateDish: (id: string) => apiRequest<Dish>(`/dishes/${id}`, { method: "PATCH", body: JSON.stringify({ isActive: true }) }),
   listOptions: () => listAll<Option>("/options"),
-  searchOptions: (params: { page?: number; pageSize?: number; search?: string } = {}) =>
+  searchOptions: (params: { page?: number; pageSize?: number; search?: string; isActive?: boolean } = {}) =>
     apiRequest<PaginatedResponse<Option>>(`/options?${toQuery(params)}`),
+  dishPrices: (id: string) => apiRequest<ItemTierPrice[]>(`/dishes/${id}/prices`),
+  optionPrices: (id: string) => apiRequest<ItemTierPrice[]>(`/options/${id}/prices`),
   getOption: (id: string) => apiRequest<Option>(`/options/${id}`),
   createOption: (body: OptionWriteInput) => apiRequest<Option>("/options", { method: "POST", body: JSON.stringify(body) }),
   updateOption: (id: string, body: Partial<OptionWriteInput>) => apiRequest<Option>(`/options/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
@@ -117,6 +121,12 @@ export const menuApi = {
   updateCategory: (id: string, body: Partial<{ name: string; slug: string; displayOrder: number; isActive: boolean; isSecret: boolean }>) =>
     apiRequest<MenuCategory>(`/menu/categories/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   /** Replaces the whole ordered item list in one request. */
+  /** Replaces the full set of companies hiding the category (one transaction). */
+  setCategoryHiding: (categoryId: string, companyIds: string[]) =>
+    apiRequest<{ categoryId: string; hiddenByCompanyIds: string[] }>(`/menu/categories/${categoryId}/hidden-companies`, { method: "PUT", body: JSON.stringify({ companyIds }) }),
+  /** Replaces the full set of companies hiding the dish on every menu. */
+  setDishHiding: (dishId: string, companyIds: string[]) =>
+    apiRequest<{ dishId: string; hiddenByCompanyIds: string[] }>(`/menu/dishes/${dishId}/hidden-companies`, { method: "PUT", body: JSON.stringify({ companyIds }) }),
   replaceItems: (categoryId: string, items: { dishId: string; displayOrder: number; isActive: boolean }[]) =>
     apiRequest<MenuCategory>(`/menu/categories/${categoryId}/items`, { method: "PUT", body: JSON.stringify({ items }) }),
 };
@@ -124,7 +134,7 @@ export const menuApi = {
 // ─── Pricing ────────────────────────────────────────────────────────────────
 
 export const pricingApi = {
-  listTiers: () => apiRequest<(PriceTier & { _count: { companies: number } })[]>("/price-tiers"),
+  listTiers: () => apiRequest<PriceTierListItem[]>("/price-tiers"),
   getTier: (id: string) => apiRequest<PriceTier>(`/price-tiers/${id}`),
   createTier: (body: PriceTierWriteInput) => apiRequest<PriceTier>("/price-tiers", { method: "POST", body: JSON.stringify(body) }),
   updateTier: (id: string, body: Partial<PriceTierWriteInput>) => apiRequest<PriceTier>(`/price-tiers/${id}`, { method: "PATCH", body: JSON.stringify(body) }),

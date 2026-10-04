@@ -12,6 +12,7 @@ export type GridRow = { key: string; kind: "dish" | "option"; item: TierEditorRo
 
 type Props = {
   title: string;
+  subtitle?: string;
   rows: GridRow[];
   edits: Map<string, string>;
   errors: Map<string, string>;
@@ -19,13 +20,13 @@ type Props = {
   onEdit: (key: string, value: string | null) => void;
 };
 
-export const sourceOf = (item: TierEditorRow) => (item.priceCents === null ? "MISSING" : item.source === "OVERRIDE" ? "OVERRIDE" : "DERIVED");
+export const sourceOf = (item: TierEditorRow) => (item.effectiveCents === null ? "MISSING" : item.source === "OVERRIDE" ? "OVERRIDE" : "DERIVED");
 
 /** Is the typed value different from the saved override? (invalid input counts as a change.) */
 export function isChanged(item: TierEditorRow, text: string | undefined): boolean {
   if (text === undefined) return false;
   const cents = parseMoneyToCents(text);
-  return Number.isNaN(cents) || cents !== item.overridePriceCents;
+  return Number.isNaN(cents) || cents !== item.overrideCents;
 }
 
 function focusCell(from: HTMLInputElement, step: number) {
@@ -33,7 +34,7 @@ function focusCell(from: HTMLInputElement, step: number) {
   cells[cells.indexOf(from) + step]?.focus();
 }
 
-export function EditorGrid({ title, rows, edits, errors, readOnly, onEdit }: Props) {
+export function EditorGrid({ title, subtitle, rows, edits, errors, readOnly, onEdit }: Props) {
   const onKey = (event: KeyboardEvent<HTMLInputElement>, key: string) => {
     if (event.key === "ArrowDown" || event.key === "Enter") {
       event.preventDefault();
@@ -47,6 +48,7 @@ export function EditorGrid({ title, rows, edits, errors, readOnly, onEdit }: Pro
   };
   return (
     <section aria-label={title} className="overflow-x-auto rounded-lg border bg-card">
+      {subtitle && <p className="border-b px-3 py-2 text-xs text-muted-foreground">{subtitle}</p>}
       <table className="w-full text-sm">
         <thead className="sticky top-0 z-10 bg-card shadow-[inset_0_-1px_0_var(--border)]">
           <tr>
@@ -63,7 +65,7 @@ export function EditorGrid({ title, rows, edits, errors, readOnly, onEdit }: Pro
             const text = edits.get(key);
             const dirty = isChanged(item, text);
             const invalid = text !== undefined && Number.isNaN(parseMoneyToCents(text));
-            const missing = item.priceCents === null;
+            const missing = item.effectiveCents === null;
             const source = sourceOf(item);
             return (
               <tr key={key} className={cn("border-b last:border-0", missing && "bg-danger-soft/50", !item.isActive && "text-muted-foreground")}>
@@ -75,7 +77,9 @@ export function EditorGrid({ title, rows, edits, errors, readOnly, onEdit }: Pro
                   {errors.get(key) && <span className="block text-xs text-danger">{errors.get(key)}</span>}
                 </td>
                 <td className="num px-3 text-right">{formatMoney(item.costCents)}</td>
-                <td className="num px-3 text-right">{source === "DERIVED" ? formatMoney(item.priceCents) : <span className="text-muted-foreground">—</span>}</td>
+                <td className={cn("num px-3 text-right", source === "OVERRIDE" && "text-muted-foreground")}>
+                  {item.derivedCents === null ? <span className="text-muted-foreground" title="This tier has no formula for it (manual tier or no cost/source price)">—</span> : formatMoney(item.derivedCents)}
+                </td>
                 <td className="px-3 py-1 text-right">
                   <Input
                     data-price-cell
@@ -83,14 +87,14 @@ export function EditorGrid({ title, rows, edits, errors, readOnly, onEdit }: Pro
                     inputMode="decimal"
                     placeholder="none"
                     readOnly={readOnly}
-                    value={text ?? centsToInput(item.overridePriceCents)}
+                    value={text ?? centsToInput(item.overrideCents)}
                     onChange={(e) => onEdit(key, e.target.value)}
                     onKeyDown={(e) => onKey(e, key)}
                     aria-invalid={invalid || Boolean(errors.get(key))}
                     className={cn("num ml-auto h-8 w-28 text-right", dirty && "bg-saffron-soft", invalid && "ring-2 ring-danger")}
                   />
                 </td>
-                <td className="num px-3 text-right font-medium">{missing ? <span className="text-danger">Missing</span> : formatMoney(item.priceCents)}</td>
+                <td className="num px-3 text-right font-medium">{missing ? <span className="text-danger">Missing</span> : formatMoney(item.effectiveCents)}</td>
                 <td className="px-3 text-center"><StatusBadge kind="priceSource" value={source} size="sm" /></td>
               </tr>
             );

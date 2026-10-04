@@ -107,8 +107,8 @@ export function AdminAttention({ data, cutoffWindow, loading }: Props) {
       id: `tier-${tier.tierId}`,
       tone: "info",
       icon: Tags,
-      text: `${tier.tierName}: ${plural(tier.dishes.length, "active dish")} ${tier.dishes.length === 1 ? "has" : "have"} no price, so ${tier.dishes.length === 1 ? "it is" : "they are"} hidden from menus on this tier (${tier.dishes.slice(0, 3).join(", ")}${tier.dishes.length > 3 ? ", …" : ""}).`,
-      action: linkButton("/pricing", "Open pricing"),
+      text: `${tier.tierName}: ${plural(tier.missingDishes, "active dish")} ${tier.missingDishes === 1 ? "has" : "have"} no price, so ${tier.missingDishes === 1 ? "it is" : "they are"} hidden from menus on this tier.`,
+      action: linkButton(`/pricing/${tier.tierId}?missing=true`, "Fix prices"),
     });
   }
 

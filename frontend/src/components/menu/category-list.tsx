@@ -6,12 +6,10 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import type { MenuCategorySummary } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { ReorderButtons } from "@/components/app/reorder-buttons";
-import type { HidingIndex } from "./queries";
 
 type Props = {
   categories: MenuCategorySummary[];
   selectedId: string | null;
-  hiding: HidingIndex | undefined;
   canManage: boolean;
   pending: boolean;
   onSelect: (id: string) => void;
@@ -19,11 +17,11 @@ type Props = {
   onToggleActive: (category: MenuCategorySummary, isActive: boolean) => void;
 };
 
-export function CategoryList({ categories, selectedId, hiding, canManage, pending, onSelect, onMove, onToggleActive }: Props) {
+export function CategoryList({ categories, selectedId, canManage, pending, onSelect, onMove, onToggleActive }: Props) {
   return (
     <ol className="flex flex-col gap-1">
       {categories.map((category, i) => {
-        const hiddenFor = hiding?.categories.get(category.id)?.size ?? 0;
+        const hiddenFor = category.hiddenCompanyCount;
         return (
           <li
             key={category.id}

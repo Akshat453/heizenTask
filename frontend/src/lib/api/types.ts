@@ -39,13 +39,16 @@ export type MenuCategorySummary = {
   id: string; name: string; slug: string; displayOrder: number;
   isActive: boolean; isSecret: boolean;
   _count: { items: number };
+  hiddenCompanyCount: number;
 };
 
 /** GET /menu/categories/:id */
 export type MenuCategory = {
   id: string; name: string; slug: string; displayOrder: number;
   isActive: boolean; isSecret: boolean;
-  items: { dishId: string; displayOrder: number; isActive: boolean; dish: Pick<Dish, "id" | "name" | "sku" | "isActive"> }[];
+  /** Companies hiding this category. */
+  hiddenByCompanyIds: string[];
+  items: { dishId: string; displayOrder: number; isActive: boolean; dish: Pick<Dish, "id" | "name" | "sku" | "isActive">; hiddenByCompanyIds: string[] }[];
   _count?: { items: number };
 };
 
@@ -231,8 +234,7 @@ export type OrderListItem = {
 export type OrderListQuery = {
   page?: number; pageSize?: number; search?: string; status?: OrderStatus; companyId?: string;
   deliveryDateFrom?: string; deliveryDateTo?: string;
-  /** Only `true` is sent: the API's boolean parsing turns "false" into true. */
-  invoiced?: true;
+  invoiced?: boolean;
   deliveryDropId?: string;
 };
 
@@ -330,6 +332,8 @@ export type MenuPreview = {
   tierId: string;
   preferences: { allergens: NamedReference[]; dietaryTags: NamedReference[]; blocking: false };
   categories: { id: string; name: string; slug: string; displayOrder: number; isSecret: boolean; dishes: MenuPreviewDish[] }[];
+  /** Only on the full preview (not on a single category opened by slug). */
+  rules?: PreviewRules;
 };
 
 export type CompanyDetail = Company & {
@@ -374,9 +378,14 @@ export type PriceTierWriteInput = {
 };
 
 export type PriceSource = "OVERRIDE" | "MANUAL" | "COST_MULTIPLIER" | "TIER_PERCENTAGE" | "MISSING" | string;
+/** overrideCents: typed override; derivedCents: the tier formula ignoring that override (null for MANUAL or underivable); effectiveCents: what new orders use. */
 export type TierEditorRow = {
   id: string; name: string; costCents: number; isActive: boolean;
-  overridePriceCents: number | null; priceCents: number | null; source: PriceSource; sku?: string;
+  overrideCents: number | null; derivedCents: number | null; effectiveCents: number | null; source: PriceSource; sku?: string;
 };
 export type TierEditor = { tier: PriceTier; dishes: (TierEditorRow & { sku: string })[]; options: TierEditorRow[] };
 export type PriceOverride = { itemId: string; priceCents: number | null };
+
+export type PriceTierListItem = PriceTier & { _count: { companies: number }; missingDishCount: number | null; missingOptionCount: number | null };
+export type ItemTierPrice = { tierId: string; tierName: string; isDefault: boolean; isActive: boolean; effectiveCents: number | null; source: "OVERRIDE" | "DERIVED" | "MISSING" };
+export type PreviewRules = { tierId: string; tierName: string | null; usedDefaultTier: boolean; hiddenCategoryCount: number; hiddenDishCount: number; unpricedDishCount: number };
