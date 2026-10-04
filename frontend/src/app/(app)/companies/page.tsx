@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { companiesApi, type Company } from "@/lib/api";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button";
 import { Plus, Edit2, FileText } from "lucide-react";
 
 export default function CompaniesPage() {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
 import { employeesApi, companiesApi, referenceDataApi, type Employee, type Company, type NamedReference } from "@/lib/api";
@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import { Edit2, Plus } from "lucide-react";
@@ -25,6 +25,16 @@ const schema = z.object({
   dietaryTagIds: z.array(z.string()),
 });
 
+/** Employees screen data (pure fetch; no state). */
+function loadScreenData() {
+  return Promise.all([
+    employeesApi.list({ pageSize: 100 }),
+    companiesApi.list({ pageSize: 100 }),
+    referenceDataApi.allergens(),
+    referenceDataApi.dietaryTags(),
+  ]);
+}
+
 export default function EmployeesPage() {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [companies, setCompanies] = useState<Company[]>([]);
@@ -39,19 +49,20 @@ export default function EmployeesPage() {
     resolver: zodResolver(schema),
     defaultValues: { name: "", email: "", companyId: "", canChooseDeliveryAddress: false, canChangeDeliveryTime: false, canChangePackaging: false, allergenIds: [], dietaryTagIds: [] },
   });
+  // Reactive form values (useWatch is React-Compiler compatible; form.watch is not).
+  const watched = useWatch({ control: form.control });
+
+  type ScreenData = Awaited<ReturnType<typeof loadScreenData>>;
+  const applyScreenData = ([empRes, compRes, a, d]: ScreenData) => {
+    setEmployees(empRes.data);
+    setCompanies(compRes.data);
+    setAllergens(a.filter(x => x.isActive));
+    setDietaryTags(d.filter(x => x.isActive));
+  };
 
   const fetchData = async () => {
     try {
-      const [empRes, compRes, a, d] = await Promise.all([
-        employeesApi.list({ pageSize: 100 }),
-        companiesApi.list({ pageSize: 100 }),
-        referenceDataApi.allergens(),
-        referenceDataApi.dietaryTags(),
-      ]);
-      setEmployees(empRes.data);
-      setCompanies(compRes.data);
-      setAllergens(a.filter(x => x.isActive));
-      setDietaryTags(d.filter(x => x.isActive));
+      applyScreenData(await loadScreenData());
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to load data");
     } finally {
@@ -59,7 +70,22 @@ export default function EmployeesPage() {
     }
   };
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => {
+    let active = true;
+    loadScreenData()
+      .then(([empRes, compRes, a, d]) => {
+        if (!active) return;
+        setEmployees(empRes.data);
+        setCompanies(compRes.data);
+        setAllergens(a.filter(x => x.isActive));
+        setDietaryTags(d.filter(x => x.isActive));
+      })
+      .catch((err: unknown) => active && toast.error(err instanceof Error ? err.message : "Failed to load data"))
+      .finally(() => active && setLoading(false));
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const openModal = (emp?: Employee) => {
     if (emp) {
@@ -127,7 +153,7 @@ export default function EmployeesPage() {
 
               <div className="space-y-2">
                 <Label>Company</Label>
-                <Select value={form.watch("companyId") || ""} onValueChange={(val) => form.setValue("companyId", val || "")}>
+                <Select value={watched.companyId || ""} onValueChange={(val) => form.setValue("companyId", val || "")}>
                   <SelectTrigger>
                     <SelectValue placeholder="Select a company" />
                   </SelectTrigger>
@@ -141,15 +167,15 @@ export default function EmployeesPage() {
               <div className="space-y-4 border rounded-lg p-4 bg-stone-50">
                 <h3 className="font-medium text-sm">Permissions & Capabilities</h3>
                 <div className="flex items-center space-x-2">
-                  <Checkbox id="addr" checked={form.watch("canChooseDeliveryAddress")} onCheckedChange={(c) => form.setValue("canChooseDeliveryAddress", !!c)} />
+                  <Checkbox id="addr" checked={watched.canChooseDeliveryAddress ?? false} onCheckedChange={(c) => form.setValue("canChooseDeliveryAddress", !!c)} />
                   <Label htmlFor="addr">Can choose delivery address</Label>
                 </div>
                 <div className="flex items-center space-x-2">
-                  <Checkbox id="time" checked={form.watch("canChangeDeliveryTime")} onCheckedChange={(c) => form.setValue("canChangeDeliveryTime", !!c)} />
+                  <Checkbox id="time" checked={watched.canChangeDeliveryTime ?? false} onCheckedChange={(c) => form.setValue("canChangeDeliveryTime", !!c)} />
                   <Label htmlFor="time">Can change delivery time</Label>
                 </div>
                 <div className="flex items-center space-x-2">
-                  <Checkbox id="pkg" checked={form.watch("canChangePackaging")} onCheckedChange={(c) => form.setValue("canChangePackaging", !!c)} />
+                  <Checkbox id="pkg" checked={watched.canChangePackaging ?? false} onCheckedChange={(c) => form.setValue("canChangePackaging", !!c)} />
                   <Label htmlFor="pkg">Can change packaging</Label>
                 </div>
               </div>
@@ -161,9 +187,9 @@ export default function EmployeesPage() {
                     <div key={a.id} className="flex items-center space-x-2">
                       <Checkbox 
                         id={`all-${a.id}`} 
-                        checked={form.watch("allergenIds").includes(a.id)}
+                        checked={(watched.allergenIds ?? []).includes(a.id)}
                         onCheckedChange={(c) => {
-                          const cur = form.watch("allergenIds");
+                          const cur = form.getValues("allergenIds");
                           form.setValue("allergenIds", c ? [...cur, a.id] : cur.filter(id => id !== a.id));
                         }}
                       />
@@ -178,9 +204,9 @@ export default function EmployeesPage() {
                     <div key={d.id} className="flex items-center space-x-2">
                       <Checkbox 
                         id={`diet-${d.id}`} 
-                        checked={form.watch("dietaryTagIds").includes(d.id)}
+                        checked={(watched.dietaryTagIds ?? []).includes(d.id)}
                         onCheckedChange={(c) => {
-                          const cur = form.watch("dietaryTagIds");
+                          const cur = form.getValues("dietaryTagIds");
                           form.setValue("dietaryTagIds", c ? [...cur, d.id] : cur.filter(id => id !== d.id));
                         }}
                       />

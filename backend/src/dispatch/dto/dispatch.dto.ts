@@ -1,10 +1,11 @@
-import { IsOptional, IsString, IsDateString, IsEnum, IsUUID } from 'class-validator';
+import { IsOptional, IsEnum, IsUUID } from 'class-validator';
+import { PaginationQueryDto } from '../../common/dto/pagination-query.dto.js';
+import { IsBusinessDate } from '../../business-time/business-date.validator.js';
 import { DeliveryDropStatus } from '../../generated/prisma/enums.js';
-import { Type } from 'class-transformer';
 
-export class DispatchQueryDto {
+export class DispatchQueryDto extends PaginationQueryDto {
   @IsOptional()
-  @IsDateString()
+  @IsBusinessDate()
   date?: string;
 
   @IsOptional()

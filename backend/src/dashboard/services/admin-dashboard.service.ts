@@ -1,9 +1,16 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service.js';
 import { BusinessTimeService } from '../../business-time/business-time.service.js';
+import { dbDateFromIsoDate } from '../../business-time/business-time.utils.js';
 import { SettingsService } from '../../settings/settings.service.js';
-import { OrderStatus, DeliveryDropStatus } from '../../generated/prisma/enums.js';
-import { calculatePlannedKitchenReadyAt } from '../../kitchen/services/kitchen-timing.helper.js';
+import {
+  OrderStatus,
+  DeliveryDropStatus,
+} from '../../generated/prisma/enums.js';
+import {
+  calculatePlannedKitchenReadyAt,
+  classifyKitchenTiming,
+} from '../../kitchen/services/kitchen-timing.helper.js';
 
 @Injectable()
 export class AdminDashboardService {
@@ -16,8 +23,10 @@ export class AdminDashboardService {
   async getAdminDashboard() {
     const isoToday = await this.businessTime.getBusinessDate();
     const now = new Date();
-    
-    const { start, end } = await this.businessTime.getBusinessDateBounds(isoToday);
+
+    const { start, end } =
+      await this.businessTime.getBusinessDateBounds(isoToday);
+    const businessDate = dbDateFromIsoDate(isoToday);
 
     const [
       todayOrders,
@@ -29,10 +38,7 @@ export class AdminDashboardService {
       // 1. Today's Orders (active)
       this.prisma.order.count({
         where: {
-          deliveryDate: {
-            gte: start,
-            lt: end,
-          },
+          deliveryDate: businessDate, // DATE column: exact business date,
           status: {
             notIn: [OrderStatus.CANCELLED, OrderStatus.REJECTED],
           },
@@ -42,10 +48,7 @@ export class AdminDashboardService {
       // 2. Today's Billable Value
       this.prisma.order.aggregate({
         where: {
-          deliveryDate: {
-            gte: start,
-            lt: end,
-          },
+          deliveryDate: businessDate, // DATE column: exact business date,
           billableTotalCents: { not: null },
         },
         _sum: { billableTotalCents: true },
@@ -68,7 +71,10 @@ export class AdminDashboardService {
             lt: end,
           },
           status: {
-            in: [DeliveryDropStatus.DISPATCH_READY, DeliveryDropStatus.OUT_FOR_DELIVERY],
+            in: [
+              DeliveryDropStatus.DISPATCH_READY,
+              DeliveryDropStatus.OUT_FOR_DELIVERY,
+            ],
           },
         },
       }),
@@ -108,7 +114,13 @@ export class AdminDashboardService {
         settings.settings.kitchenReadyBufferMinutes,
       );
 
-      if (plannedKitchenReadyAt.getTime() <= now.getTime()) {
+      const timing = classifyKitchenTiming({
+        plannedKitchenReadyAt,
+        now,
+        atRiskWindowMinutes: settings.settings.atRiskWindowMinutes,
+        complete: false,
+      });
+      if (timing === 'LATE') {
         lateKitchenOrders++;
         latePrepUnits += order._count.prepUnits;
       }

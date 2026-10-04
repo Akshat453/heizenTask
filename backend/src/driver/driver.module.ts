@@ -11,11 +11,7 @@ import { AuthModule } from '../auth/auth.module.js';
 @Module({
   imports: [PrismaModule, BusinessTimeModule, AuthModule],
   controllers: [DriverController],
-  providers: [
-    DriverQueryService,
-    DeliveryProofService,
-    DriverLifecycleService,
-  ],
+  providers: [DriverQueryService, DeliveryProofService, DriverLifecycleService],
   exports: [DeliveryProofService],
 })
 export class DriverModule {}

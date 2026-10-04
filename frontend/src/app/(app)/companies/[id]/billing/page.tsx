@@ -7,7 +7,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Checkbox } from '@/components/ui/checkbox';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
-import { apiRequest } from '@/lib/api-client';
+import { describeError } from '@/lib/api-client';
+import { billingApi, companiesApi, type Company, type UninvoicedOrder } from '@/lib/api';
 
 function formatCurrency(cents: number) {
   return (cents / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
@@ -18,27 +19,20 @@ export default function CompanyBillingPage() {
   const router = useRouter();
   const companyId = params.id as string;
   
-  const [orders, setOrders] = useState<any[]>([]);
+  const [orders, setOrders] = useState<UninvoicedOrder[]>([]);
   const [selectedOrderIds, setSelectedOrderIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
-  const [company, setCompany] = useState<any>(null);
+  const [company, setCompany] = useState<Company | null>(null);
 
   useEffect(() => {
-    async function load() {
-      try {
-        const compRes = await apiRequest<any>(`/companies/${companyId}`);
-        if (compRes) setCompany(compRes);
-        
-        const data = await apiRequest<any>(`/companies/${companyId}/billing/uninvoiced`);
-        setOrders(data.data || []);
-      } catch (e: any) {
-        toast.error(e.message);
-      } finally {
-        setLoading(false);
-      }
-    }
-    load();
+    Promise.all([companiesApi.get(companyId), billingApi.uninvoiced(companyId)])
+      .then(([companyResponse, uninvoiced]) => {
+        setCompany(companyResponse);
+        setOrders(uninvoiced.data);
+      })
+      .catch((e: unknown) => toast.error(describeError(e)))
+      .finally(() => setLoading(false));
   }, [companyId]);
 
   const toggleOrder = (id: string) => {
@@ -57,25 +51,19 @@ export default function CompanyBillingPage() {
 
   const selectedTotal = orders
     .filter(o => selectedOrderIds.includes(o.id))
-    .reduce((sum, o) => sum + (o.billableTotalCents || 0), 0);
+    .reduce((sum, o) => sum + o.billableTotalCents, 0);
 
   const generateInvoice = async () => {
     if (selectedOrderIds.length === 0) return;
     
     setGenerating(true);
     try {
-      const invoice = await apiRequest<any>('/invoices', {
-        method: 'POST',
-        body: JSON.stringify({
-          companyId,
-          orderIds: selectedOrderIds,
-        }),
-      });
-      
+      const invoice = await billingApi.createInvoice(companyId, selectedOrderIds);
+
       toast.success('Invoice generated successfully');
       router.push(`/billing/invoices/${invoice.id}`);
-    } catch (e: any) {
-      toast.error(e.message);
+    } catch (e: unknown) {
+      toast.error(describeError(e));
       setGenerating(false);
     }
   };
@@ -137,7 +125,7 @@ export default function CompanyBillingPage() {
                   </TableCell>
                 </TableRow>
               ) : (
-                orders.map((order: any) => (
+                orders.map((order) => (
                   <TableRow key={order.id} className={selectedOrderIds.includes(order.id) ? "bg-muted/50" : ""}>
                     <TableCell>
                       <Checkbox 
@@ -149,7 +137,7 @@ export default function CompanyBillingPage() {
                     <TableCell>{order.employee.name}</TableCell>
                     <TableCell>{new Date(order.deliveryDate).toLocaleDateString()}</TableCell>
                     <TableCell>{order.status}</TableCell>
-                    <TableCell className="text-right">{formatCurrency(order.billableTotalCents || 0)}</TableCell>
+                    <TableCell className="text-right">{formatCurrency(order.billableTotalCents)}</TableCell>
                   </TableRow>
                 ))
               )}

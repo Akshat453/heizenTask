@@ -19,7 +19,10 @@ describe('DriverQueryService', () => {
         },
         {
           provide: BusinessTimeService,
-          useValue: { getBusinessDateBounds: vi.fn(), getTimezone: vi.fn().mockReturnValue('UTC') },
+          useValue: {
+            getBusinessDateBounds: vi.fn(),
+            getTimezone: vi.fn().mockReturnValue('UTC'),
+          },
         },
       ],
     }).compile();

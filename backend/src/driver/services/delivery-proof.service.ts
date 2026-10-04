@@ -1,85 +1,119 @@
-import { Injectable, Logger, BadRequestException } from '@nestjs/common';
-import { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
+import {
+  Injectable,
+  Logger,
+  ServiceUnavailableException,
+} from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import {
+  DeleteObjectCommand,
+  GetObjectCommand,
+  PutObjectCommand,
+  S3Client,
+} from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { randomUUID } from 'crypto';
-import * as path from 'path';
+import { validateDeliveryPhoto } from '../delivery-photo.js';
 
+/** The subset of Multer's in-memory file used for delivery proof uploads. */
+export type UploadedPhoto = {
+  buffer: Buffer;
+  mimetype: string;
+  originalname: string;
+  size: number;
+};
+
+/** Proof URLs are short-lived. */
+export const PROOF_URL_TTL_SECONDS = 300;
+
+/**
+ * Private S3 storage for delivery proof photos.
+ * - AWS_S3_BUCKET is optional: without it the app starts normally, note-only
+ *   delivery works, and only photo upload/view is unavailable.
+ * - AWS_REGION defaults to us-east-1; credentials come from the standard AWS
+ *   provider chain (never from request data, never sent to clients).
+ * - Only the server-generated object key is persisted (in DeliveryDrop.photoUrl).
+ */
 @Injectable()
 export class DeliveryProofService {
   private readonly logger = new Logger(DeliveryProofService.name);
-  private s3Client: S3Client | null = null;
-  private bucket: string | null = null;
+  private readonly bucket: string | null;
+  private readonly region: string;
+  private client: S3Client | null = null;
 
-  constructor() {
-    this.bucket = process.env.AWS_S3_BUCKET || null;
-    
-    // Attempt to instantiate S3 Client, do not throw if missing config
-    // Relying on AWS credential chain. 
-    try {
-      this.s3Client = new S3Client({
-        region: process.env.AWS_REGION || 'us-east-1',
-        // Note: accessKeyId and secretAccessKey can be picked up from env automatically by the SDK
-      });
-      if (!this.bucket) {
-        this.logger.warn('AWS_S3_BUCKET is not configured. Delivery photos will not be supported.');
-      }
-    } catch (error) {
-      this.logger.warn('Failed to configure S3Client, photo uploads will be disabled.', error);
-    }
+  constructor(config: ConfigService) {
+    this.bucket = config.get<string>('AWS_S3_BUCKET')?.trim() || null;
+    this.region = config.get<string>('AWS_REGION')?.trim() || 'us-east-1';
+    if (!this.bucket)
+      this.logger.warn(
+        'AWS_S3_BUCKET is not configured; delivery photos are disabled (note-only delivery still works).',
+      );
   }
 
-  /**
-   * Uploads a file to S3 and returns the object key.
-   */
-  async uploadPhoto(dropId: string, file: any): Promise<string> {
-    if (!this.s3Client || !this.bucket) {
-      throw new BadRequestException('S3 is not configured for photo uploads on this server');
-    }
+  get isConfigured(): boolean {
+    return this.bucket !== null;
+  }
 
-    const ext = path.extname(file.originalname) || '.jpg';
-    const key = `delivery-proofs/${dropId}/${randomUUID()}${ext}`;
-
+  /** Validates the bytes (≤5 MB, JPEG/PNG/WebP by magic bytes) and uploads under a server-generated key. */
+  async uploadPhoto(dropId: string, file: UploadedPhoto): Promise<string> {
+    const { contentType, extension } = validateDeliveryPhoto(file);
+    const bucket = this.requireBucket();
+    const key = `delivery-proofs/${dropId}/${randomUUID()}.${extension}`;
     try {
-      await this.s3Client.send(new PutObjectCommand({
-        Bucket: this.bucket,
-        Key: key,
-        Body: file.buffer,
-        ContentType: file.mimetype,
-      }));
+      await this.s3().send(
+        new PutObjectCommand({
+          Bucket: bucket,
+          Key: key,
+          Body: file.buffer,
+          ContentType: contentType,
+        }),
+      );
       return key;
-    } catch (err) {
-      this.logger.error(`Failed to upload photo for drop ${dropId}`, err);
-      throw new BadRequestException('Failed to upload photo proof');
+    } catch (error) {
+      this.logger.error(
+        `Failed to upload delivery proof for drop ${dropId}`,
+        error instanceof Error ? error.stack : String(error),
+      );
+      throw new ServiceUnavailableException(
+        'Photo upload failed; the delivery was not recorded.',
+      );
     }
   }
 
-  /**
-   * Best-effort deletion if DB transaction fails.
-   */
-  async deletePhoto(key: string) {
-    if (!this.s3Client || !this.bucket) return;
+  /** Best-effort removal of an uploaded object whose delivery transition did not commit. */
+  async deletePhoto(key: string): Promise<void> {
+    if (!this.bucket) return;
     try {
-      await this.s3Client.send(new DeleteObjectCommand({
-        Bucket: this.bucket,
-        Key: key,
-      }));
-    } catch (err) {
-      this.logger.error(`Failed to delete orphaned photo ${key}`, err);
+      await this.s3().send(
+        new DeleteObjectCommand({ Bucket: this.bucket, Key: key }),
+      );
+    } catch (error) {
+      this.logger.error(
+        `Failed to delete orphaned delivery proof ${key}`,
+        error instanceof Error ? error.stack : String(error),
+      );
     }
   }
 
-  /**
-   * Generates a presigned GET URL for an object key.
-   */
+  /** Short-lived presigned GET for a key read from an authorized Drop (never a client-supplied key). */
   async generatePresignedUrl(key: string): Promise<string> {
-    if (!this.s3Client || !this.bucket) {
-      throw new BadRequestException('S3 is not configured');
-    }
-    const command = new GetObjectCommand({
-      Bucket: this.bucket,
-      Key: key,
-    });
-    // URL expires in 15 minutes
-    return getSignedUrl(this.s3Client, command, { expiresIn: 900 });
+    const bucket = this.requireBucket();
+    return getSignedUrl(
+      this.s3(),
+      new GetObjectCommand({ Bucket: bucket, Key: key }),
+      { expiresIn: PROOF_URL_TTL_SECONDS },
+    );
+  }
+
+  private requireBucket(): string {
+    if (!this.bucket)
+      throw new ServiceUnavailableException(
+        'Photo storage is not configured on this server.',
+      );
+    return this.bucket;
+  }
+
+  private s3(): S3Client {
+    this.client ??= new S3Client({ region: this.region });
+    return this.client;
   }
 }

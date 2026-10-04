@@ -28,7 +28,10 @@ import {
 const prisma = createSeedClient();
 const PASSWORD = 'Test@1234';
 const BCRYPT_COST = 12;
-const REVIEW_WINDOW_DAYS = 14;
+/** Future calendar days with a confirmed, driver-assigned DISPATCH_READY Drop (so ≥14 days stay ahead for two weeks). */
+const REVIEW_WINDOW_DAYS = 28;
+/** Past business days with a delivered, driver-completed Drop. */
+const HISTORY_DAYS = 7;
 
 type AddressSeed = {
   id: string;
@@ -1530,6 +1533,15 @@ function reviewDeliverySlot(today: PlainDate, dayOffset: number) {
   };
 }
 
+function historyDeliverySlot(today: PlainDate, daysAgo: number) {
+  return {
+    key: `history-day-${reviewDayKey(daysAgo)}`,
+    date: addDays(today, -daysAgo),
+    hour: 12,
+    minute: daysAgo % 2 === 0 ? 0 : 30,
+  };
+}
+
 function orderSeeds(today: PlainDate): OrderSeed[] {
   const rice = (
     groupKey: string,
@@ -1960,7 +1972,26 @@ function orderSeeds(today: PlainDate): OrderSeed[] {
     },
   );
 
-  return [...baseOrders, ...reviewOrders];
+  const historyOrders: OrderSeed[] = Array.from({ length: HISTORY_DAYS }, (_, index) => {
+    const daysAgo = index + 1;
+    const slot = historyDeliverySlot(today, daysAgo);
+    return {
+      number: `DEMO-HISTORY-${reviewDayKey(daysAgo)}`,
+      companyKey: 'acme',
+      employeeKey: reviewEmployees[index % reviewEmployees.length]!,
+      addressKey: 'acme-hq',
+      packagingKey: 'eco',
+      date: slot.date,
+      deliveryHour: slot.hour,
+      deliveryMinute: slot.minute,
+      status: OrderStatus.DELIVERED,
+      lines: [singleLine('poha', 'poha', 2 + (daysAgo % 3), standardDishPrices.poha!)],
+      dropKey: slot.key,
+      prepState: 'DONE',
+    };
+  });
+
+  return [...baseOrders, ...reviewOrders, ...historyOrders];
 }
 
 function lineTotal(line: LineSeed): number {
@@ -2008,7 +2039,7 @@ async function seedDrops(
       status: DeliveryDropStatus.DELIVERED,
       deliveredOffset: -15,
       note: 'Delivered to reception; signed by security.',
-      photo: 'https://images.unsplash.com/photo-1580674285054-bed31e145f59',
+      photo: null,
     },
     {
       key: 'today-grouped',
@@ -2044,7 +2075,7 @@ async function seedDrops(
       status: DeliveryDropStatus.DELIVERED,
       deliveredOffset: 12,
       note: 'Handed to the facilities coordinator.',
-      photo: 'https://images.unsplash.com/photo-1617347454431-f49d7ff5c3b1',
+      photo: null,
     },
   ] as const;
   const reviewDefinitions = Array.from(
@@ -2062,7 +2093,20 @@ async function seedDrops(
       };
     },
   );
-  const definitions = [...fixedDefinitions, ...reviewDefinitions];
+  const historyDefinitions = Array.from({ length: HISTORY_DAYS }, (_, index) => {
+    const daysAgo = index + 1;
+    return {
+      ...historyDeliverySlot(today, daysAgo),
+      company: 'acme',
+      address: 'acme-hq',
+      status: DeliveryDropStatus.DELIVERED,
+      // Alternate early (on time) and late deliveries so onTime has both values.
+      deliveredOffset: daysAgo % 2 === 0 ? -10 : 8,
+      note: 'Delivered to reception.',
+      photo: null,
+    };
+  });
+  const definitions = [...fixedDefinitions, ...reviewDefinitions, ...historyDefinitions];
   const dropIds: Record<string, string> = {};
   for (const drop of definitions) {
     const id = seedId(`drop:${drop.key}`);
@@ -2347,8 +2391,12 @@ async function seedOrders(
       update: orderData,
     });
 
+    // Expected seed-owned graph; anything else under this Order (e.g. created by
+    // reviewers through the app) is pruned below so a rerun restores the seed state.
+    const expected = { lines: [] as string[], combinations: [] as string[], options: [] as string[], prepCombinations: [] as string[], events: [] as string[] };
     for (const line of order.lines) {
       const lineId = seedId(`order-line:${order.number}:${line.key}`);
+      expected.lines.push(lineId);
       const dish = dishes[line.dishKey]!;
       const calculatedLineTotal = lineTotal(line);
       await client.orderLine.upsert({
@@ -2379,6 +2427,7 @@ async function seedOrders(
         const combinationId = seedId(
           `combination:${order.number}:${line.key}:${combination.key}`,
         );
+        expected.combinations.push(combinationId);
         const selectionTotal = combination.selections.reduce(
           (sum, selection) =>
             sum +
@@ -2414,6 +2463,7 @@ async function seedOrders(
           const selectionId = seedId(
             `combination-option:${order.number}:${line.key}:${combination.key}:${selection.groupKey}`,
           );
+          expected.options.push(selectionId);
           const group = groups[selection.groupKey]!;
           const option = options[selection.optionKey]!;
           await client.orderCombinationOption.upsert({
@@ -2453,6 +2503,7 @@ async function seedOrders(
         }
 
         if (order.prepState) {
+          expected.prepCombinations.push(combinationId);
           const dishStationId = catalogue.stationIds[dish.station]!;
           const stationName = stationSeeds.find(
             ([key]) => key === dish.station,
@@ -2506,6 +2557,7 @@ async function seedOrders(
     );
     for (const [index, event] of events.entries()) {
       const eventId = seedId(`event:${order.number}:${index}:${event.type}`);
+      expected.events.push(eventId);
       const eventData = {
         orderId,
         type: event.type,
@@ -2520,6 +2572,13 @@ async function seedOrders(
         update: eventData,
       });
     }
+
+    // FK-safe pruning of non-seed children: PrepUnits → options → combinations → lines; events.
+    await client.prepUnit.deleteMany({ where: { orderId, combinationId: { notIn: expected.prepCombinations } } });
+    await client.orderCombinationOption.deleteMany({ where: { combination: { orderLine: { orderId } }, id: { notIn: expected.options } } });
+    await client.orderCombination.deleteMany({ where: { orderLine: { orderId }, id: { notIn: expected.combinations } } });
+    await client.orderLine.deleteMany({ where: { orderId, id: { notIn: expected.lines } } });
+    await client.orderEvent.deleteMany({ where: { orderId, id: { notIn: expected.events } } });
   }
   return { orders, orderTotals };
 }
@@ -2616,7 +2675,7 @@ async function main() {
   );
   await seedSettings(prisma, today);
   const dropIds = await seedDrops(prisma, today, companies);
-  const { orderTotals } = await seedOrders(
+  const { orders, orderTotals } = await seedOrders(
     prisma,
     today,
     catalogue,
@@ -2624,8 +2683,10 @@ async function main() {
     dropIds,
   );
   await seedInvoices(prisma, today, orderTotals);
+  const dates = orders.map((order) => dateKey(order.date)).sort();
   console.log(
-    'Demo seed completed: 4 staff accounts, 3 companies, 9 dishes, 30 orders, 18 drops, and 2 invoices.',
+    `Demo seed completed: ${staffSeeds.length} staff accounts, ${Object.keys(companies.companyIds).length} companies, ${dishSeeds.length} dishes, ` +
+      `${orders.length} orders (${dates[0]} → ${dates.at(-1)}), ${Object.keys(dropIds).length} drops, and invoices.`,
   );
 }
 

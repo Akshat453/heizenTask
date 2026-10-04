@@ -1,7 +1,8 @@
-import { IsDateString, IsOptional, IsString } from 'class-validator';
+import { IsOptional, IsString } from 'class-validator';
+import { IsBusinessDate } from '../../business-time/business-date.validator.js';
 
 export class KitchenQueryDto {
-  @IsDateString()
+  @IsBusinessDate()
   date: string;
 
   @IsOptional()

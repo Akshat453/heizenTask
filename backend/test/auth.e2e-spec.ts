@@ -1,60 +1,117 @@
 import { INestApplication } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
+import bcrypt from 'bcryptjs';
 import request from 'supertest';
 import type { App } from 'supertest/types.js';
 import { configureApp } from '../src/app.setup.js';
 import { AppModule } from '../src/app.module.js';
+import { PrismaService } from '../src/prisma/prisma.service.js';
+import {
+  cleanupTestData,
+  testEmail,
+  testId,
+  testName,
+} from './support/fixtures.js';
 
-const TEST_PASSWORD = 'Test@1234';
-
-type ExpectedAccount = {
-  email: string;
-  role: string;
-  includes: string[];
-  excludes?: string[];
-};
-
-const accounts: ExpectedAccount[] = [
-  {
-    email: 'admin@test.com',
-    role: 'ADMIN',
-    includes: ['staff.manage', 'catalogue.manage', 'orders.override'],
-  },
-  {
-    email: 'kitchen@test.com',
-    role: 'KITCHEN',
-    includes: ['catalogue.read', 'kitchen.read', 'kitchen.update'],
-    excludes: ['staff.manage', 'orders.override'],
-  },
-  {
-    email: 'dispatch@test.com',
-    role: 'DISPATCH',
-    includes: ['dispatch.read', 'dispatch.update', 'dispatch.assign_driver'],
-    excludes: ['staff.manage'],
-  },
-  {
-    email: 'driver@test.com',
-    role: 'DRIVER',
-    includes: ['driver.own_drops.read', 'driver.own_drops.deliver'],
-    excludes: ['dispatch.update', 'staff.manage'],
-  },
+/**
+ * Authentication against TEST-* fixture accounts on the isolated test database.
+ * (The seeded reviewer accounts and their role/permission matrix are verified
+ * against the development database by prisma/verify-seed.ts.)
+ */
+const PASSWORD = 'Fixture@1234';
+const DRIVER_PERMISSIONS = [
+  'driver.own_drops.deliver',
+  'driver.own_drops.read',
 ];
+const OPS_PERMISSIONS = ['dispatch.read', 'dispatch.update'];
 
 describe('Authentication (e2e)', () => {
   let app: INestApplication<App>;
+  let prisma: PrismaService;
+  const createdPermissionIds: string[] = [];
+  const opsEmail = testEmail('auth-ops');
+  const driverEmail = testEmail('auth-driver');
+  const inactiveEmail = testEmail('auth-inactive');
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
     }).compile();
-
     app = moduleFixture.createNestApplication();
     configureApp(app);
     await app.init();
+    prisma = app.get(PrismaService);
+    await cleanupTestData(prisma);
+
+    const permissionIds = new Map<string, string>();
+    for (const key of [...DRIVER_PERMISSIONS, ...OPS_PERMISSIONS]) {
+      const existing = await prisma.permission.findUnique({ where: { key } });
+      const permission =
+        existing ??
+        (await prisma.permission.create({
+          data: { key, description: 'Test fixture permission' },
+        }));
+      if (!existing) createdPermissionIds.push(permission.id);
+      permissionIds.set(key, permission.id);
+    }
+    const passwordHash = await bcrypt.hash(PASSWORD, 4);
+    const account = async (
+      key: string,
+      roleName: string,
+      email: string,
+      permissions: string[],
+      isActive = true,
+    ) => {
+      const roleId = testId(`AUTH:${key}-role`);
+      await prisma.role.create({
+        data: {
+          id: roleId,
+          name: roleName,
+          description: 'Test role',
+          permissions: {
+            create: permissions.map((name) => ({
+              permissionId: permissionIds.get(name)!,
+            })),
+          },
+        },
+      });
+      await prisma.staffUser.create({
+        data: {
+          id: testId(`AUTH:${key}`),
+          name: testName(`AUTH-${key}`),
+          email,
+          passwordHash,
+          roleId,
+          isActive,
+        },
+      });
+    };
+    await account('ops', testName('AUTH-OPS'), opsEmail, OPS_PERMISSIONS);
+    await account(
+      'driver',
+      testName('AUTH-DRIVER'),
+      driverEmail,
+      DRIVER_PERMISSIONS,
+    );
+    await account(
+      'inactive',
+      testName('AUTH-INACTIVE'),
+      inactiveEmail,
+      OPS_PERMISSIONS,
+      false,
+    );
   });
 
   afterAll(async () => {
-    await app.close();
+    try {
+      await cleanupTestData(prisma);
+      if (createdPermissionIds.length)
+        await prisma.permission.deleteMany({
+          where: { id: { in: createdPermissionIds } },
+        });
+    } finally {
+      await app.close();
+    }
   });
 
   it('rejects unauthenticated /auth/me requests', async () => {
@@ -68,19 +125,23 @@ describe('Authentication (e2e)', () => {
       .expect(400);
   });
 
-  it('rejects a wrong password without revealing account existence', async () => {
-    const response = await request(app.getHttpServer())
+  it('rejects a wrong password or inactive account without revealing account existence', async () => {
+    const wrong = await request(app.getHttpServer())
       .post('/auth/login')
-      .send({ email: 'admin@test.com', password: 'wrong-password' })
+      .send({ email: opsEmail, password: 'wrong-password' })
       .expect(401);
-
-    expect(response.body.message).toBe('Invalid email or password.');
+    expect(wrong.body.message).toBe('Invalid email or password.');
+    const inactive = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ email: inactiveEmail, password: PASSWORD })
+      .expect(401);
+    expect(inactive.body.message).toBe('Invalid email or password.');
   });
 
-  it('sets a host-only HttpOnly cookie and returns no password hash', async () => {
+  it('sets a host-only HttpOnly cookie, normalizes the email and returns no password hash', async () => {
     const response = await request(app.getHttpServer())
       .post('/auth/login')
-      .send({ email: '  ADMIN@test.com ', password: TEST_PASSWORD })
+      .send({ email: `  ${opsEmail.toUpperCase()} `, password: PASSWORD })
       .expect(200);
 
     const cookies = response.headers['set-cookie'];
@@ -94,39 +155,30 @@ describe('Authentication (e2e)', () => {
     expect(response.body).not.toHaveProperty('passwordHash');
   });
 
-  it.each(accounts)(
-    'authenticates $email with the expected database permissions',
-    async ({ email, role, includes, excludes = [] }) => {
-      const agent = request.agent(app.getHttpServer());
-      const loginResponse = await agent
-        .post('/auth/login')
-        .send({ email, password: TEST_PASSWORD })
-        .expect(200);
-
-      expect(loginResponse.body).toMatchObject({ email, role });
-      const meResponse = await agent.get('/auth/me').expect(200);
-      expect(meResponse.body).toMatchObject({ email, role });
-      expect(meResponse.body).not.toHaveProperty('passwordHash');
-      expect(meResponse.body.permissions).toEqual(
-        expect.arrayContaining(includes),
-      );
-      for (const permission of excludes) {
-        expect(meResponse.body.permissions).not.toContain(permission);
-      }
-      if (role === 'DRIVER') {
-        expect(meResponse.body.permissions).toEqual([
-          'driver.own_drops.deliver',
-          'driver.own_drops.read',
-        ]);
-      }
-    },
-  );
+  it('exposes exactly the role permissions from the database on /auth/me', async () => {
+    const agent = request.agent(app.getHttpServer());
+    await agent
+      .post('/auth/login')
+      .send({ email: driverEmail, password: PASSWORD })
+      .expect(200);
+    const me = await agent.get('/auth/me').expect(200);
+    expect(me.body).toMatchObject({
+      email: driverEmail,
+      role: 'TEST-AUTH-DRIVER',
+    });
+    expect(me.body).not.toHaveProperty('passwordHash');
+    expect(
+      [...me.body.permissions].sort((a: string, b: string) =>
+        a.localeCompare(b),
+      ),
+    ).toEqual(DRIVER_PERMISSIONS);
+  });
 
   it('clears the browser cookie on logout and is idempotent', async () => {
     const agent = request.agent(app.getHttpServer());
     await agent
       .post('/auth/login')
-      .send({ email: 'admin@test.com', password: TEST_PASSWORD })
+      .send({ email: opsEmail, password: PASSWORD })
       .expect(200);
     await agent.get('/auth/me').expect(200);
 

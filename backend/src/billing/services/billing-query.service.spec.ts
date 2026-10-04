@@ -32,36 +32,46 @@ describe('BillingQueryService', () => {
   });
 
   describe('getUninvoicedOrders', () => {
-    it('should return orders with billableTotalCents (including confirmed-then-cancelled)', async () => {
+    it('paginates billable uninvoiced orders (incl. confirmed-then-cancelled) with a company-wide total', async () => {
       const mockOrders = [
-        {
-          id: '1',
-          status: OrderStatus.CONFIRMED,
-          billableTotalCents: 1000,
-        },
-        {
-          id: '2',
-          status: OrderStatus.CANCELLED,
-          billableTotalCents: 500, // Confirmed-then-cancelled
-        },
+        { id: '1', status: OrderStatus.CONFIRMED, billableTotalCents: 1000 },
+        { id: '2', status: OrderStatus.CANCELLED, billableTotalCents: 500 }, // confirmed then cancelled
       ];
+      const order = prisma.order as unknown as Record<
+        string,
+        ReturnType<typeof vi.fn>
+      >;
+      order.findMany!.mockReturnValue(mockOrders);
+      order.count = vi.fn().mockReturnValue(45);
+      order.aggregate = vi
+        .fn()
+        .mockReturnValue({ _sum: { billableTotalCents: 99_000 } });
+      (
+        prisma as unknown as { $transaction: ReturnType<typeof vi.fn> }
+      ).$transaction = vi.fn(async (ops: unknown[]) => Promise.all(ops));
 
-      (prisma.order.findMany as any).mockResolvedValue(mockOrders);
-
-      const result = await service.getUninvoicedOrders('company-1');
-
-      expect(prisma.order.findMany).toHaveBeenCalledWith({
-        where: {
-          companyId: 'company-1',
-          billableTotalCents: { not: null },
-          invoiceOrder: null,
-        },
-        select: expect.any(Object),
-        orderBy: expect.any(Object),
+      const result = await service.getUninvoicedOrders('company-1', {
+        page: 2,
+        pageSize: 20,
       });
 
-      expect(result.data).toEqual(mockOrders);
-      expect(result.totalUninvoicedCents).toBe(1500);
+      expect(order.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            companyId: 'company-1',
+            billableTotalCents: { not: null },
+            invoiceOrder: null,
+          },
+          orderBy: [{ deliveryDate: 'asc' }, { id: 'asc' }],
+          skip: 20,
+          take: 20,
+        }),
+      );
+      expect(result).toEqual({
+        data: mockOrders,
+        pagination: { page: 2, pageSize: 20, totalItems: 45, totalPages: 3 },
+        totalUninvoicedCents: 99_000,
+      });
     });
   });
 });

@@ -338,6 +338,9 @@ model CompanyHiddenDish {
   @@index([dishId])
 }
 
+// Raw-migration invariant (20261004000000_price_tier_single_default_and_settings_singleton):
+// partial unique index "PriceTier_single_active_default_key" allows at most one
+// row WHERE "isActive" AND "isDefault". Deploy with `prisma migrate deploy`, never `db push`.
 model PriceTier {
   id                  String            @id @default(uuid()) @db.Uuid
   name                String            @unique
@@ -745,6 +748,7 @@ model InvoiceOrder {
   @@id([invoiceId, orderId])
 }
 
+// Raw-migration invariant: CHECK constraint "PlatformSettings_singleton_id_check" enforces id = 1.
 model PlatformSettings {
   id                        Int      @id @default(1)
   businessTimezone          String   @default("Asia/Kolkata")

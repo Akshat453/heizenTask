@@ -1,21 +1,17 @@
-/* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, react-hooks/exhaustive-deps, react-hooks/incompatible-library */
 "use client";
 
-import { useForm, useFieldArray } from "react-hook-form";
+import { useForm, useFieldArray, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import { Trash2, Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { companiesApi, referenceDataApi } from "@/lib/api";
+import { companiesApi, referenceDataApi, type Company, type CompanyWriteInput, type OrderedReference } from "@/lib/api";
 import { useEffect, useState } from "react";
-
-const ALL_DAYS = ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"];
 
 const schema = z.object({
   name: z.string().min(1, "Name required"),
@@ -50,28 +46,58 @@ const schema = z.object({
   }).optional(),
 });
 
-type FormValues = z.infer<typeof schema>;
+type FormInput = z.input<typeof schema>;
+type FormValues = z.output<typeof schema>;
 
-export function CompanyForm({ initialData }: { initialData?: any }) {
+/** API Company → form values (TIME → HH:mm, working-day rows → day names, nullable → ""). */
+function toFormValues(company: Company): FormInput {
+  return {
+    name: company.name,
+    billingContactName: company.billingContactName,
+    billingContactEmail: company.billingContactEmail,
+    billingContactPhone: company.billingContactPhone ?? "",
+    defaultDeliveryTime: company.defaultDeliveryTime.slice(11, 16),
+    deliveryLeadMinutes: company.deliveryLeadMinutes,
+    defaultPackagingTypeId: company.defaultPackagingTypeId,
+    workingDays: (company.workingDays ?? []).map(({ dayOfWeek }) => dayOfWeek),
+    domains: company.domains.map(({ domain }) => ({ domain })),
+    addresses: company.addresses.map((address) => ({
+      id: address.id,
+      label: address.label,
+      line1: address.line1,
+      line2: address.line2 ?? "",
+      city: address.city,
+      region: address.region ?? "",
+      postalCode: address.postalCode ?? "",
+      country: address.country,
+      isActive: address.isActive,
+    })),
+  };
+}
+
+const EMPTY_COMPANY: FormInput = {
+  name: "", billingContactName: "", billingContactEmail: "", billingContactPhone: "",
+  defaultDeliveryTime: "12:00", deliveryLeadMinutes: 60, defaultPackagingTypeId: "",
+  workingDays: ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
+  domains: [{ domain: "" }],
+  addresses: [{ label: "HQ", line1: "", city: "", country: "", isActive: true }],
+  owner: { name: "", email: "", canChooseDeliveryAddress: false, canChangeDeliveryTime: false, canChangePackaging: false, allergenIds: [], dietaryTagIds: [] },
+};
+
+export function CompanyForm({ initialData }: { initialData?: Company }) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
-  const [pkgTypes, setPkgTypes] = useState<any[]>([]);
+  const [pkgTypes, setPkgTypes] = useState<OrderedReference[]>([]);
 
   useEffect(() => {
-    referenceDataApi.packagingTypes().then(setPkgTypes).catch(console.error);
+    referenceDataApi.packagingTypes().then(setPkgTypes).catch(() => toast.error("Failed to load packaging types"));
   }, []);
 
-  const form = useForm<FormValues>({
-    resolver: zodResolver(schema) as any,
-    defaultValues: initialData || {
-      name: "", billingContactName: "", billingContactEmail: "", billingContactPhone: "",
-      defaultDeliveryTime: "12:00", deliveryLeadMinutes: 60, defaultPackagingTypeId: "",
-      workingDays: ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
-      domains: [{ domain: "" }],
-      addresses: [{ label: "HQ", line1: "", city: "", country: "", isActive: true }],
-      owner: { name: "", email: "", canChooseDeliveryAddress: false, canChangeDeliveryTime: false, canChangePackaging: false, allergenIds: [], dietaryTagIds: [] }
-    }
+  const form = useForm<FormInput, unknown, FormValues>({
+    resolver: zodResolver(schema),
+    defaultValues: initialData ? toFormValues(initialData) : EMPTY_COMPANY,
   });
+  const defaultPackagingTypeId = useWatch({ control: form.control, name: "defaultPackagingTypeId" });
 
   const { fields: domainFields, append: addDomain, remove: removeDomain } = useFieldArray({ control: form.control, name: "domains" });
   const { fields: addressFields, append: addAddress, remove: removeAddress } = useFieldArray({ control: form.control, name: "addresses" });
@@ -79,23 +105,26 @@ export function CompanyForm({ initialData }: { initialData?: any }) {
   const onSubmit = async (values: FormValues) => {
     setLoading(true);
     try {
-      const payload = {
-        ...values,
-        domains: values.domains.map(d => d.domain),
-        holidays: [],
-        hiddenCategoryIds: [],
-        hiddenDishIds: []
-      };
-      
+      const shared = {
+        name: values.name,
+        billingContactName: values.billingContactName,
+        billingContactEmail: values.billingContactEmail,
+        billingContactPhone: values.billingContactPhone,
+        defaultDeliveryTime: values.defaultDeliveryTime,
+        deliveryLeadMinutes: values.deliveryLeadMinutes,
+        defaultPackagingTypeId: values.defaultPackagingTypeId,
+        workingDays: values.workingDays,
+        domains: values.domains.map((d) => d.domain),
+        addresses: values.addresses,
+      } satisfies Partial<CompanyWriteInput>;
+
       if (!initialData) {
-        // Create requires owner
         if (!values.owner?.name) throw new Error("Owner name is required for new company");
-        await companiesApi.create(payload);
+        await companiesApi.create({ ...shared, owner: values.owner, holidays: [], hiddenCategoryIds: [], hiddenDishIds: [] });
         toast.success("Company created");
       } else {
-        // Update doesn't need owner payload, it's patched separately if needed
-        const { owner, ...updatePayload } = payload;
-        await companiesApi.update(initialData.id, updatePayload);
+        // Holidays and hidden menu configuration are not edited here; omitting them preserves them.
+        await companiesApi.update(initialData.id, shared);
         toast.success("Company updated");
       }
       router.push("/companies");
@@ -107,7 +136,7 @@ export function CompanyForm({ initialData }: { initialData?: any }) {
   };
 
   return (
-    <form onSubmit={form.handleSubmit(onSubmit as any)} className="space-y-8 max-w-4xl bg-white p-6 rounded-lg border">
+    <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8 max-w-4xl bg-white p-6 rounded-lg border">
       <section>
         <h2 className="text-lg font-medium border-b pb-2 mb-4">Basic Details</h2>
         <div className="grid grid-cols-2 gap-4">
@@ -125,7 +154,7 @@ export function CompanyForm({ initialData }: { initialData?: any }) {
           <div className="space-y-2"><Label>Lead Time (mins)</Label><Input type="number" {...form.register("deliveryLeadMinutes", { valueAsNumber: true })} /></div>
           <div className="space-y-2">
             <Label>Default Packaging</Label>
-            <Select value={form.watch("defaultPackagingTypeId") || ""} onValueChange={(v) => form.setValue("defaultPackagingTypeId", v || "")}>
+            <Select value={defaultPackagingTypeId || ""} onValueChange={(v) => form.setValue("defaultPackagingTypeId", v || "")}>
               <SelectTrigger><SelectValue placeholder="Select packaging" /></SelectTrigger>
               <SelectContent>{pkgTypes.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}</SelectContent>
             </Select>

@@ -1,5 +1,16 @@
 import { Type } from 'class-transformer';
-import { ArrayUnique, IsArray, IsBoolean, IsEnum, IsInt, IsOptional, IsString, IsUUID, MaxLength, Min, ValidateNested } from 'class-validator';
+import {
+  IsArray,
+  IsBoolean,
+  IsEnum,
+  IsInt,
+  IsOptional,
+  IsString,
+  IsUUID,
+  MaxLength,
+  Min,
+  ValidateNested,
+} from 'class-validator';
 import { PriceTierStrategy } from '../../generated/prisma/enums.js';
 
 export class CreatePriceTierDto {
@@ -7,8 +18,10 @@ export class CreatePriceTierDto {
   @IsOptional() @IsBoolean() isDefault?: boolean;
   @IsEnum(PriceTierStrategy) strategy!: PriceTierStrategy;
   @IsOptional() @IsUUID() sourceTierId?: string | null;
-  @IsOptional() @Type(() => Number) @IsInt() @Min(1) costMultiplierBps?: number | null;
-  @IsOptional() @Type(() => Number) @IsInt() @Min(-9_999) sourceAdjustmentBps?: number | null;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) costMultiplierBps?:
+    number | null;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(-9_999) sourceAdjustmentBps?:
+    number | null;
   @IsOptional() @IsBoolean() isActive?: boolean;
 }
 
@@ -17,8 +30,10 @@ export class UpdatePriceTierDto {
   @IsOptional() @IsBoolean() isDefault?: boolean;
   @IsOptional() @IsEnum(PriceTierStrategy) strategy?: PriceTierStrategy;
   @IsOptional() @IsUUID() sourceTierId?: string | null;
-  @IsOptional() @Type(() => Number) @IsInt() @Min(1) costMultiplierBps?: number | null;
-  @IsOptional() @Type(() => Number) @IsInt() @Min(-9_999) sourceAdjustmentBps?: number | null;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) costMultiplierBps?:
+    number | null;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(-9_999) sourceAdjustmentBps?:
+    number | null;
   @IsOptional() @IsBoolean() isActive?: boolean;
 }
 
@@ -28,6 +43,12 @@ export class PriceOverrideDto {
 }
 
 export class UpdateTierPricesDto {
-  @IsArray() @ValidateNested({ each: true }) @Type(() => PriceOverrideDto) dishOverrides!: PriceOverrideDto[];
-  @IsArray() @ValidateNested({ each: true }) @Type(() => PriceOverrideDto) optionOverrides!: PriceOverrideDto[];
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => PriceOverrideDto)
+  dishOverrides!: PriceOverrideDto[];
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => PriceOverrideDto)
+  optionOverrides!: PriceOverrideDto[];
 }

@@ -24,15 +24,21 @@ describe('normalizeCompanyDomain', () => {
   });
 
   it('throws for gmail.com (public domain)', () => {
-    expect(() => normalizeCompanyDomain('gmail.com')).toThrow(BadRequestException);
+    expect(() => normalizeCompanyDomain('gmail.com')).toThrow(
+      BadRequestException,
+    );
   });
 
   it('throws for hotmail.com', () => {
-    expect(() => normalizeCompanyDomain('hotmail.com')).toThrow(BadRequestException);
+    expect(() => normalizeCompanyDomain('hotmail.com')).toThrow(
+      BadRequestException,
+    );
   });
 
   it('throws for an invalid domain', () => {
-    expect(() => normalizeCompanyDomain('not a domain')).toThrow(BadRequestException);
+    expect(() => normalizeCompanyDomain('not a domain')).toThrow(
+      BadRequestException,
+    );
   });
 
   it('throws for an empty string', () => {

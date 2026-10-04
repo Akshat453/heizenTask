@@ -4,33 +4,30 @@ import { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { Button, buttonVariants } from '@/components/ui/button';
+import { buttonVariants } from '@/components/ui/button';
 import Link from 'next/link';
-import { apiRequest } from '@/lib/api-client';
+import { describeError } from '@/lib/api-client';
+import { billingApi, type InvoiceSummary } from '@/lib/api';
 
 function formatCurrency(cents: number) {
   return (cents / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
 }
 
 export default function BillingPage() {
-  const [invoices, setInvoices] = useState<any[]>([]);
+  const [invoices, setInvoices] = useState<InvoiceSummary[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    async function load() {
-      try {
-        const res = await apiRequest<any>('/invoices');
-        setInvoices(res.data || []);
-      } catch (e) {
-        // console.error(e);
-      } finally {
-        setLoading(false);
-      }
-    }
-    load();
+    billingApi
+      .listInvoices()
+      .then((res) => setInvoices(res.data))
+      .catch((e: unknown) => setError(describeError(e, 'Failed to load invoices')))
+      .finally(() => setLoading(false));
   }, []);
 
   if (loading) return <div className="p-8">Loading invoices...</div>;
+  if (error) return <div className="p-8 text-destructive">{error}</div>;
 
   return (
     <div className="space-y-6 p-8 max-w-7xl mx-auto">
@@ -65,7 +62,7 @@ export default function BillingPage() {
                   </TableCell>
                 </TableRow>
               ) : (
-                invoices.map((inv: any) => (
+                invoices.map((inv) => (
                   <TableRow key={inv.id}>
                     <TableCell className="font-medium">{inv.invoiceNumber}</TableCell>
                     <TableCell>{inv.company.name}</TableCell>

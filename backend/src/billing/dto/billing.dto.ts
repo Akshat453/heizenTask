@@ -1,4 +1,12 @@
-import { IsArray, IsInt, IsOptional, IsString, IsUUID, Min } from 'class-validator';
+import {
+  IsArray,
+  IsEnum,
+  IsInt,
+  IsOptional,
+  IsUUID,
+  Min,
+} from 'class-validator';
+import { InvoiceStatus } from '../../generated/prisma/enums.js';
 import { Type } from 'class-transformer';
 
 export class CreateInvoiceDto {
@@ -16,8 +24,8 @@ export class InvoiceQueryDto {
   companyId?: string;
 
   @IsOptional()
-  @IsString()
-  status?: string;
+  @IsEnum(InvoiceStatus)
+  status?: InvoiceStatus;
 
   @IsOptional()
   @Type(() => Number)

@@ -1,13 +1,20 @@
-import { Controller, Get, Post, Param, Body, UseGuards, UploadedFile, UseInterceptors } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  UploadedFile,
+  UseInterceptors,
+} from '@nestjs/common';
+import { IdParam } from '../common/decorators/id-param.decorator.js';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
-import { PermissionsGuard } from '../common/guards/permissions.guard.js';
 import { RequirePermissions } from '../common/decorators/require-permissions.decorator.js';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 import { DriverQueryService } from './services/driver-query.service.js';
+import type { UploadedPhoto } from './services/delivery-proof.service.js';
+import { MAX_DELIVERY_PHOTO_BYTES } from './delivery-photo.js';
 import { DriverLifecycleService } from './services/driver-lifecycle.service.js';
 
-@UseGuards(JwtAuthGuard, PermissionsGuard)
 @Controller('driver/drops')
 export class DriverController {
   constructor(
@@ -23,11 +30,15 @@ export class DriverController {
 
   @RequirePermissions('driver.own_drops.deliver')
   @Post(':id/deliver')
-  @UseInterceptors(FileInterceptor('photo'))
+  @UseInterceptors(
+    FileInterceptor('photo', {
+      limits: { fileSize: MAX_DELIVERY_PHOTO_BYTES, files: 1 },
+    }),
+  )
   async deliver(
-    @Param('id') dropId: string,
-    @Body('note') note: string,
-    @UploadedFile() photo: any,
+    @IdParam() dropId: string,
+    @Body('note') note: string | undefined,
+    @UploadedFile() photo: UploadedPhoto | undefined,
     @CurrentUser('id') driverId: string,
   ) {
     return this.lifecycleService.markDelivered(dropId, driverId, note, photo);

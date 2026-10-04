@@ -1,8 +1,8 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 'use client';
 
 import { useEffect, useState } from 'react';
-import { apiRequest } from '@/lib/api-client';
+import { describeError } from '@/lib/api-client';
+import { dashboardApi, type DriverDashboardData } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Truck, MapPin, CheckCircle2, Clock } from 'lucide-react';
@@ -10,22 +10,15 @@ import { format, parseISO } from 'date-fns';
 import { Badge } from '@/components/ui/badge';
 
 export function DriverDashboard() {
-  const [data, setData] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
+  const [data, setData] = useState<DriverDashboardData | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    async function fetchDashboard() {
-      try {
-        const res = await apiRequest<any>('/dashboard/driver');
-        setData(res.data);
-      } catch (err: any) {
-        setError(err.message || 'Failed to load dashboard');
-      } finally {
-        setLoading(false);
-      }
-    }
-    fetchDashboard();
+    // The API returns { businessDate, metrics } directly (no `data` envelope).
+    dashboardApi
+      .driver()
+      .then(setData)
+      .catch((err: unknown) => setError(describeError(err, 'Failed to load dashboard')));
   }, []);
 
   if (error) {
@@ -50,7 +43,7 @@ export function DriverDashboard() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {loading ? <Skeleton className="h-8 w-16" /> : data.metrics.todayDrops}
+              {!data ? <Skeleton className="h-8 w-16" /> : data.metrics.todayDrops}
             </div>
             <p className="text-xs text-muted-foreground mt-1">Total assigned drops</p>
           </CardContent>
@@ -64,7 +57,7 @@ export function DriverDashboard() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {loading ? <Skeleton className="h-8 w-16" /> : data.metrics.remaining}
+              {!data ? <Skeleton className="h-8 w-16" /> : data.metrics.remaining}
             </div>
             <p className="text-xs text-muted-foreground mt-1">Not yet delivered</p>
           </CardContent>
@@ -78,7 +71,7 @@ export function DriverDashboard() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {loading ? <Skeleton className="h-8 w-16" /> : data.metrics.delivered}
+              {!data ? <Skeleton className="h-8 w-16" /> : data.metrics.delivered}
             </div>
             <p className="text-xs text-muted-foreground mt-1">Delivered today</p>
           </CardContent>
@@ -94,7 +87,7 @@ export function DriverDashboard() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {loading ? (
+          {!data ? (
             <div className="space-y-2">
               <Skeleton className="h-6 w-48" />
               <Skeleton className="h-4 w-64" />

@@ -12,16 +12,10 @@ export class DriverDashboardService {
 
   async getDriverDashboard(driverId: string) {
     const isoToday = await this.businessTime.getBusinessDate();
-    const now = new Date();
-    
-    const { start, end } = await this.businessTime.getBusinessDateBounds(isoToday);
+    const { start, end } =
+      await this.businessTime.getBusinessDateBounds(isoToday);
 
-    const [
-      todayDrops,
-      remaining,
-      delivered,
-      nextDropObj,
-    ] = await Promise.all([
+    const [todayDrops, remaining, delivered, nextDropObj] = await Promise.all([
       // 1. Today's Drops
       this.prisma.deliveryDrop.count({
         where: {

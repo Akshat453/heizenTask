@@ -1,9 +1,13 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service.js';
 import { BusinessTimeService } from '../../business-time/business-time.service.js';
+import { dbDateFromIsoDate } from '../../business-time/business-time.utils.js';
 import { SettingsService } from '../../settings/settings.service.js';
 import { OrderStatus } from '../../generated/prisma/enums.js';
-import { calculatePlannedKitchenReadyAt } from '../../kitchen/services/kitchen-timing.helper.js';
+import {
+  calculatePlannedKitchenReadyAt,
+  classifyKitchenTiming,
+} from '../../kitchen/services/kitchen-timing.helper.js';
 
 @Injectable()
 export class KitchenDashboardService {
@@ -16,16 +20,13 @@ export class KitchenDashboardService {
   async getKitchenDashboard() {
     const isoToday = await this.businessTime.getBusinessDate();
     const now = new Date();
-    
-    const { start, end } = await this.businessTime.getBusinessDateBounds(isoToday);
+
+    const businessDate = dbDateFromIsoDate(isoToday);
 
     const prepUnits = await this.prisma.prepUnit.findMany({
       where: {
         order: {
-          deliveryDate: {
-            gte: start,
-            lt: end,
-          },
+          deliveryDate: businessDate, // DATE column: exact business date,
           status: OrderStatus.CONFIRMED,
         },
       },
@@ -43,14 +44,21 @@ export class KitchenDashboardService {
     });
 
     const settings = await this.settingsService.getSettings();
-    const atRiskWindowMs = (settings.settings.atRiskWindowMinutes || 30) * 60 * 1000;
 
     let notStarted = 0;
     let started = 0;
     let atRisk = 0;
     let late = 0;
-    
-    const unfinishedDeadlines: { time: number; data: any }[] = [];
+
+    const unfinishedDeadlines: Array<{
+      time: number;
+      data: {
+        plannedKitchenReadyAt: string;
+        orderId: string;
+        orderNumber: string;
+        companyName: string;
+      };
+    }> = [];
 
     for (const unit of prepUnits) {
       if (!unit.doneAt) {
@@ -65,15 +73,16 @@ export class KitchenDashboardService {
           unit.order.deliveryLeadMinutesSnapshot,
           settings.settings.kitchenReadyBufferMinutes,
         );
-        
-        const plannedMs = plannedKitchenReadyAt.getTime();
-        const nowMs = now.getTime();
 
-        if (nowMs >= plannedMs) {
-          late++;
-        } else if (nowMs >= plannedMs - atRiskWindowMs) {
-          atRisk++;
-        }
+        const plannedMs = plannedKitchenReadyAt.getTime();
+        const timing = classifyKitchenTiming({
+          plannedKitchenReadyAt,
+          now,
+          atRiskWindowMinutes: settings.settings.atRiskWindowMinutes,
+          complete: false,
+        });
+        if (timing === 'LATE') late++;
+        else if (timing === 'AT_RISK') atRisk++;
 
         unfinishedDeadlines.push({
           time: plannedMs,
@@ -82,19 +91,21 @@ export class KitchenDashboardService {
             orderId: unit.order.id,
             orderNumber: unit.order.orderNumber,
             companyName: unit.order.company.name,
-          }
+          },
         });
       }
     }
 
     // Sort to find the earliest deadline
     unfinishedDeadlines.sort((a, b) => a.time - b.time);
-    
+
     // Group units by order for next deadline
     let nextDeadline = null;
     if (unfinishedDeadlines.length > 0) {
       const earliest = unfinishedDeadlines[0]!;
-      const remainingUnitsCount = unfinishedDeadlines.filter(u => u.data.orderId === earliest.data.orderId).length;
+      const remainingUnitsCount = unfinishedDeadlines.filter(
+        (u) => u.data.orderId === earliest.data.orderId,
+      ).length;
       nextDeadline = {
         plannedKitchenReadyAt: earliest.data.plannedKitchenReadyAt,
         orderId: earliest.data.orderId,

@@ -22,6 +22,17 @@ function errorMessage(body: ApiErrorBody | null, fallback: string): string {
   return body?.message ?? fallback;
 }
 
+/** User-facing message for any thrown value (ApiError, Error, or unknown). */
+export function describeError(error: unknown, fallback = "Something went wrong. Please try again."): string {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
+
+/**
+ * The single HTTP client for the NestJS API. Authentication is the HttpOnly
+ * session cookie, sent via `credentials: "include"` (never read from JS).
+ * JSON bodies get a JSON content type; FormData bodies are sent as-is so the
+ * browser sets the multipart boundary.
+ */
 export async function apiRequest<T>(
   path: string,
   init: RequestInit = {},
@@ -31,7 +42,8 @@ export async function apiRequest<T>(
   }
 
   const headers = new Headers(init.headers);
-  if (init.body !== undefined && !headers.has("Content-Type")) {
+  const isFormData = typeof FormData !== "undefined" && init.body instanceof FormData;
+  if (init.body !== undefined && !isFormData && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
 

@@ -6,60 +6,63 @@ import { InvoiceStatus } from '../../generated/prisma/enums.js';
 
 describe('InvoiceLifecycleService', () => {
   let service: InvoiceLifecycleService;
-  let prisma: PrismaService;
+  // Plain mock functions (not PrismaService methods) so assertions don't reference unbound methods.
+  const invoice = { updateMany: vi.fn(), findUnique: vi.fn() };
 
   beforeEach(async () => {
+    vi.clearAllMocks();
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         InvoiceLifecycleService,
         {
           provide: PrismaService,
-          useValue: {
-            invoice: {
-              updateMany: vi.fn(),
-              findUnique: vi.fn(),
-            },
-          },
+          useValue: { invoice },
         },
       ],
     }).compile();
 
     service = module.get<InvoiceLifecycleService>(InvoiceLifecycleService);
-    prisma = module.get<PrismaService>(PrismaService);
   });
 
   describe('markPaid', () => {
     it('should update UNPAID invoice to PAID', async () => {
-      (prisma.invoice.updateMany as any).mockResolvedValue({ count: 1 });
-      (prisma.invoice.findUnique as any).mockResolvedValue({ id: 'inv-1', status: InvoiceStatus.PAID });
+      invoice.updateMany.mockResolvedValue({ count: 1 });
+      invoice.findUnique.mockResolvedValue({
+        id: 'inv-1',
+        status: InvoiceStatus.PAID,
+      });
 
       const result = await service.markPaid('inv-1', 'user-1');
 
-      expect(prisma.invoice.updateMany).toHaveBeenCalledWith({
+      expect(invoice.updateMany).toHaveBeenCalledWith({
         where: { id: 'inv-1', status: InvoiceStatus.UNPAID },
         data: expect.objectContaining({
           status: InvoiceStatus.PAID,
           paidByStaffUserId: 'user-1',
         }),
       });
-      expect(result.status).toBe(InvoiceStatus.PAID);
+      expect(result?.status).toBe(InvoiceStatus.PAID);
     });
 
     it('should throw ConflictException if already paid', async () => {
-      (prisma.invoice.updateMany as any).mockResolvedValue({ count: 0 });
-      (prisma.invoice.findUnique as any).mockResolvedValue({
+      invoice.updateMany.mockResolvedValue({ count: 0 });
+      invoice.findUnique.mockResolvedValue({
         id: 'inv-1',
         status: InvoiceStatus.PAID,
       });
 
-      await expect(service.markPaid('inv-1', 'user-1')).rejects.toThrow(ConflictException);
+      await expect(service.markPaid('inv-1', 'user-1')).rejects.toThrow(
+        ConflictException,
+      );
     });
 
     it('should throw NotFoundException if invoice does not exist', async () => {
-      (prisma.invoice.updateMany as any).mockResolvedValue({ count: 0 });
-      (prisma.invoice.findUnique as any).mockResolvedValue(null);
+      invoice.updateMany.mockResolvedValue({ count: 0 });
+      invoice.findUnique.mockResolvedValue(null);
 
-      await expect(service.markPaid('inv-1', 'user-1')).rejects.toThrow(NotFoundException);
+      await expect(service.markPaid('inv-1', 'user-1')).rejects.toThrow(
+        NotFoundException,
+      );
     });
   });
 });

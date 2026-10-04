@@ -1,7 +1,12 @@
-import { Body, Controller, Delete, Get, Param, Post, Put } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Post, Put } from '@nestjs/common';
+import { IdParam } from '../common/decorators/id-param.decorator.js';
 import { RequirePermissions } from '../common/decorators/require-permissions.decorator.js';
 import { SettingsService } from './settings.service.js';
-import { CreateKitchenHolidayDto, UpdatePlatformSettingsDto, UpsertKitchenWorkingDaysDto } from './dto/settings.dto.js';
+import {
+  CreateKitchenHolidayDto,
+  UpdatePlatformSettingsDto,
+  UpsertKitchenWorkingDaysDto,
+} from './dto/settings.dto.js';
 
 @Controller('settings')
 export class SettingsController {
@@ -39,7 +44,7 @@ export class SettingsController {
 
   @Delete('holidays/:id')
   @RequirePermissions('settings.manage')
-  deleteHoliday(@Param('id') id: string) {
+  deleteHoliday(@IdParam() id: string) {
     return this.service.deleteHoliday(id);
   }
 }

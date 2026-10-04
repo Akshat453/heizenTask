@@ -6,72 +6,55 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
-import { apiRequest } from "@/lib/api-client";
+import { describeError } from "@/lib/api-client";
+import { DROP_STATUS_LABEL, driverApi, type DriverDrop } from "@/lib/api";
 
 export default function DriverPage() {
   const { can } = useAuth();
-  const [drops, setDrops] = useState<any[]>([]);
+  const [drops, setDrops] = useState<DriverDrop[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [submitting, setSubmitting] = useState(false);
 
   const [deliveryNote, setDeliveryNote] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [activeDropId, setActiveDropId] = useState<string | null>(null);
 
-  const fetchDrops = async () => {
+  useEffect(() => {
+    let active = true;
+    driverApi
+      .today()
+      .then((response) => {
+        if (!active) return;
+        setDrops(response.data);
+        setError(null);
+      })
+      .catch((err: unknown) => active && setError(describeError(err)))
+      .finally(() => active && setLoading(false));
+    return () => {
+      active = false;
+    };
+  }, [refreshKey]);
+
+  const refresh = () => {
     setLoading(true);
-    setError(null);
-    try {
-      const data = await apiRequest<{data: any[]}>("/driver/drops/today");
-      setDrops(data.data);
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
+    setRefreshKey((key) => key + 1);
   };
 
-  useEffect(() => {
-    fetchDrops();
-  }, []);
-
   const handleDeliver = async (dropId: string) => {
-    if (!fileInputRef.current?.files?.[0]) {
-      alert("Photo proof is required");
-      return;
-    }
-
-    const formData = new FormData();
-    formData.append("photo", fileInputRef.current.files[0]);
-    if (deliveryNote) {
-      formData.append("note", deliveryNote);
-    }
-
+    setSubmitting(true);
     try {
-      const token = document.cookie
-        .split("; ")
-        .find((row) => row.startsWith("token="))
-        ?.split("=")[1];
-
-      const res = await fetch(`http://localhost:3001/driver/drops/${dropId}/deliver`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-        body: formData,
-      });
-
-      if (!res.ok) {
-        const d = await res.json();
-        throw new Error(d.message || "Failed to deliver");
-      }
-      
+      // The photo is optional proof; a note-only delivery is valid.
+      await driverApi.deliver(dropId, { note: deliveryNote, photo: fileInputRef.current?.files?.[0] ?? null });
       setActiveDropId(null);
       setDeliveryNote("");
       if (fileInputRef.current) fileInputRef.current.value = "";
-      fetchDrops();
-    } catch (err: any) {
-      alert(err.message);
+      refresh();
+    } catch (err: unknown) {
+      alert(describeError(err, "Failed to record delivery"));
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -84,9 +67,9 @@ export default function DriverPage() {
       <div className="flex justify-between items-center bg-card p-6 rounded-xl border border-border/40 shadow-sm">
         <div>
           <h1 className="text-3xl font-bold tracking-tight text-foreground">My Deliveries</h1>
-          <p className="text-muted-foreground mt-1">Today's assigned route</p>
+          <p className="text-muted-foreground mt-1">Today&apos;s assigned route</p>
         </div>
-        <Button onClick={fetchDrops} variant="secondary">Refresh Route</Button>
+        <Button onClick={refresh} variant="secondary">Refresh Route</Button>
       </div>
 
       {loading ? (
@@ -113,7 +96,7 @@ export default function DriverPage() {
                     drop.status === "DELIVERED" ? "secondary" : 
                     drop.status === "OUT_FOR_DELIVERY" ? "default" : "outline"
                   } className="text-sm px-3 py-1">
-                    {drop.status.replace(/_/g, ' ')}
+                    {DROP_STATUS_LABEL[drop.status]}
                   </Badge>
                 </CardTitle>
               </CardHeader>
@@ -142,6 +125,12 @@ export default function DriverPage() {
                   <span className="text-muted-foreground">Orders to deliver:</span>
                   <span className="font-bold text-lg">{drop._count.orders}</span>
                 </div>
+                {drop.onTime !== null && (
+                  <div className="flex justify-between items-center">
+                    <span className="text-muted-foreground">Delivered:</span>
+                    <Badge variant={drop.onTime ? "secondary" : "destructive"}>{drop.onTime ? "On time" : "Late"}</Badge>
+                  </div>
+                )}
               </CardContent>
 
               {drop.status === "OUT_FOR_DELIVERY" && can("driver.own_drops.deliver") && (
@@ -149,10 +138,10 @@ export default function DriverPage() {
                   {activeDropId === drop.id ? (
                     <div className="space-y-4 animate-in fade-in slide-in-from-top-4">
                       <div className="space-y-2">
-                        <label className="text-sm font-medium">Delivery Photo Proof *</label>
+                        <label className="text-sm font-medium">Delivery Photo Proof (Optional — JPEG, PNG or WebP, max 5 MB)</label>
                         <input
                           type="file"
-                          accept="image/*"
+                          accept="image/jpeg,image/png,image/webp"
                           capture="environment"
                           ref={fileInputRef}
                           className="w-full text-sm text-muted-foreground file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-primary file:text-primary-foreground hover:file:bg-primary/90"
@@ -167,7 +156,7 @@ export default function DriverPage() {
                         />
                       </div>
                       <div className="flex gap-3">
-                        <Button className="flex-1" onClick={() => handleDeliver(drop.id)}>Submit Delivery</Button>
+                        <Button className="flex-1" disabled={submitting} onClick={() => handleDeliver(drop.id)}>{submitting ? "Submitting..." : "Submit Delivery"}</Button>
                         <Button variant="outline" onClick={() => setActiveDropId(null)}>Cancel</Button>
                       </div>
                     </div>

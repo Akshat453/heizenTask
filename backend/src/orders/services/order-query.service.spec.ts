@@ -35,10 +35,12 @@ describe('OrderQueryService', () => {
     expect(result.pagination.totalItems).toBe(100);
     expect(result.pagination.page).toBe(2);
     expect(result.data.length).toBe(1);
-    expect(prisma.order.findMany).toHaveBeenCalledWith(expect.objectContaining({
-      skip: 20,
-      take: 20
-    }));
+    expect(prisma.order.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        skip: 20,
+        take: 20,
+      }),
+    );
   });
 
   it('gets a single order', async () => {

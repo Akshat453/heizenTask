@@ -27,9 +27,9 @@ export default function DashboardPage() {
     );
   }
 
-  // Typecast user.role to any because TypeScript thinks it might just be a string.
-  // In reality, it should be an object with a `name` property.
-  const roleName = (user.role as any)?.name || (typeof user.role === 'string' ? user.role : 'UNKNOWN');
+  // The authenticated user's role name selects the presentation only; every
+  // dashboard API is still protected by permissions on the backend.
+  const roleName = user.role;
 
   if (roleName === 'ADMIN') {
     return <AdminDashboard />;

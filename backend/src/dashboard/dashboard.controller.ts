@@ -18,7 +18,13 @@ export class DashboardController {
   ) {}
 
   @Get('admin')
-  @RequirePermissions('dashboards.read', 'billing.read', 'orders.read', 'kitchen.read', 'dispatch.read')
+  @RequirePermissions(
+    'dashboards.read',
+    'billing.read',
+    'orders.read',
+    'kitchen.read',
+    'dispatch.read',
+  )
   getAdminDashboard() {
     return this.adminDashboardService.getAdminDashboard();
   }

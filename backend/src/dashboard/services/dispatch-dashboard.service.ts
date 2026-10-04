@@ -13,65 +13,62 @@ export class DispatchDashboardService {
   async getDispatchDashboard() {
     const isoToday = await this.businessTime.getBusinessDate();
     const now = new Date();
-    
-    const { start, end } = await this.businessTime.getBusinessDateBounds(isoToday);
 
-    const [
-      dispatchReady,
-      unassigned,
-      outForDelivery,
-      lateDeliveries,
-    ] = await Promise.all([
-      // 1. Dispatch Ready
-      this.prisma.deliveryDrop.count({
-        where: {
-          scheduledDeliveryAt: {
-            gte: start,
-            lt: end,
-          },
-          status: DeliveryDropStatus.DISPATCH_READY,
-        },
-      }),
+    const { start, end } =
+      await this.businessTime.getBusinessDateBounds(isoToday);
 
-      // 2. Unassigned
-      this.prisma.deliveryDrop.count({
-        where: {
-          scheduledDeliveryAt: {
-            gte: start,
-            lt: end,
+    const [dispatchReady, unassigned, outForDelivery, lateDeliveries] =
+      await Promise.all([
+        // 1. Dispatch Ready
+        this.prisma.deliveryDrop.count({
+          where: {
+            scheduledDeliveryAt: {
+              gte: start,
+              lt: end,
+            },
+            status: DeliveryDropStatus.DISPATCH_READY,
           },
-          status: DeliveryDropStatus.DISPATCH_READY,
-          driverStaffUserId: null,
-        },
-      }),
+        }),
 
-      // 3. Out For Delivery
-      this.prisma.deliveryDrop.count({
-        where: {
-          scheduledDeliveryAt: {
-            gte: start,
-            lt: end,
+        // 2. Unassigned
+        this.prisma.deliveryDrop.count({
+          where: {
+            scheduledDeliveryAt: {
+              gte: start,
+              lt: end,
+            },
+            status: DeliveryDropStatus.DISPATCH_READY,
+            driverStaffUserId: null,
           },
-          status: DeliveryDropStatus.OUT_FOR_DELIVERY,
-        },
-      }),
+        }),
 
-      // 4. Late Deliveries (Scheduled for Today AND Past Time AND Not Delivered)
-      this.prisma.deliveryDrop.count({
-        where: {
-          scheduledDeliveryAt: {
-            gte: start,
-            lt: end, // scoped to today
+        // 3. Out For Delivery
+        this.prisma.deliveryDrop.count({
+          where: {
+            scheduledDeliveryAt: {
+              gte: start,
+              lt: end,
+            },
+            status: DeliveryDropStatus.OUT_FOR_DELIVERY,
           },
-          AND: [
-            { scheduledDeliveryAt: { lt: now } } // overdue
-          ],
-          status: {
-            not: DeliveryDropStatus.DELIVERED,
+        }),
+
+        // 4. Late Deliveries (Scheduled for Today AND Past Time AND Not Delivered)
+        this.prisma.deliveryDrop.count({
+          where: {
+            scheduledDeliveryAt: {
+              gte: start,
+              lt: end, // scoped to today
+            },
+            AND: [
+              { scheduledDeliveryAt: { lt: now } }, // overdue
+            ],
+            status: {
+              not: DeliveryDropStatus.DELIVERED,
+            },
           },
-        },
-      }),
-    ]);
+        }),
+      ]);
 
     return {
       businessDate: isoToday,

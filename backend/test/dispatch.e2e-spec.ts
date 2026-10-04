@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
-import * as request from 'supertest';
+import request from 'supertest';
 import { AppModule } from './../src/app.module.js';
 
 describe('DispatchController (e2e)', () => {
@@ -20,8 +20,6 @@ describe('DispatchController (e2e)', () => {
   });
 
   it('/dispatch/drops (GET) - Unauthorized', () => {
-    return request(app.getHttpServer())
-      .get('/dispatch/drops')
-      .expect(401);
+    return request(app.getHttpServer()).get('/dispatch/drops').expect(401);
   });
 });

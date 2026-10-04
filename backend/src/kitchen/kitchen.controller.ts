@@ -1,13 +1,11 @@
-import { Controller, Get, Post, Param, Query, UseGuards } from '@nestjs/common';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
-import { PermissionsGuard } from '../common/guards/permissions.guard.js';
+import { Controller, Get, Post, Query } from '@nestjs/common';
+import { IdParam } from '../common/decorators/id-param.decorator.js';
 import { RequirePermissions } from '../common/decorators/require-permissions.decorator.js';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 import { KitchenQueryDto } from './dto/kitchen.dto.js';
 import { KitchenQueryService } from './services/kitchen-query.service.js';
 import { KitchenLifecycleService } from './services/kitchen-lifecycle.service.js';
 
-@UseGuards(JwtAuthGuard, PermissionsGuard)
 @Controller('kitchen')
 export class KitchenController {
   constructor(
@@ -24,7 +22,7 @@ export class KitchenController {
   @RequirePermissions('kitchen.update')
   @Post('prep-units/:id/start')
   async startPrepUnit(
-    @Param('id') prepUnitId: string,
+    @IdParam() prepUnitId: string,
     @CurrentUser('id') staffUserId: string,
   ) {
     return this.lifecycleService.startPrepUnit(prepUnitId, staffUserId);
@@ -33,7 +31,7 @@ export class KitchenController {
   @RequirePermissions('kitchen.update')
   @Post('prep-units/:id/done')
   async completePrepUnit(
-    @Param('id') prepUnitId: string,
+    @IdParam() prepUnitId: string,
     @CurrentUser('id') staffUserId: string,
   ) {
     return this.lifecycleService.completePrepUnit(prepUnitId, staffUserId);
@@ -42,7 +40,7 @@ export class KitchenController {
   @RequirePermissions('kitchen.force_complete')
   @Post('orders/:id/force-complete')
   async forceCompleteOrder(
-    @Param('id') orderId: string,
+    @IdParam() orderId: string,
     @CurrentUser('id') staffUserId: string,
   ) {
     return this.lifecycleService.forceCompleteOrder(orderId, staffUserId);

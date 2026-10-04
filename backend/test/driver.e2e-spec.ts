@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
-import * as request from 'supertest';
+import request from 'supertest';
 import { AppModule } from './../src/app.module.js';
 
 describe('DriverController (e2e)', () => {
@@ -20,8 +20,6 @@ describe('DriverController (e2e)', () => {
   });
 
   it('/driver/drops/today (GET) - Unauthorized', () => {
-    return request(app.getHttpServer())
-      .get('/driver/drops/today')
-      .expect(401);
+    return request(app.getHttpServer()).get('/driver/drops/today').expect(401);
   });
 });

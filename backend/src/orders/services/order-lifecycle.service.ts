@@ -1,11 +1,68 @@
-import { Injectable, NotFoundException, ConflictException, ForbiddenException, BadRequestException } from '@nestjs/common';
-import { PrismaService } from '../../prisma/prisma.service.js';
-import { OrderCreationService } from './order-creation.service.js';
-import { OrderStatus, OrderEventType, DeliveryDropStatus } from '../../generated/prisma/enums.js';
+import {
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { BusinessTimeService } from '../../business-time/business-time.service.js';
-import { RejectOrderDto, OverrideDeliveryDetailsDto } from '../dto/order.dto.js';
+import {
+  instantToBusinessDate,
+  isoDateFromDbDate,
+} from '../../business-time/business-time.utils.js';
 import { DeliveryGroupingService } from '../../dispatch/services/delivery-grouping.service.js';
+import type {
+  DeliveryDrop,
+  Order,
+  Prisma,
+} from '../../generated/prisma/client.js';
+import {
+  DeliveryDropStatus,
+  OrderEventType,
+  OrderStatus,
+} from '../../generated/prisma/enums.js';
+import type { PrismaDb } from '../../pricing/price-resolver.service.js';
+import { PrismaService } from '../../prisma/prisma.service.js';
+import {
+  OverrideDeliveryDetailsDto,
+  RejectOrderDto,
+} from '../dto/order.dto.js';
+import { OrderCreationService } from './order-creation.service.js';
+import { OrderValidationService } from './order-validation.service.js';
 
+const groupingSelect = {
+  companyId: true,
+  deliveryAddressId: true,
+  deliveryAddressLine1Snapshot: true,
+  deliveryAddressCitySnapshot: true,
+  deliveryAddressPostalCodeSnapshot: true,
+  deliveryAddressCountrySnapshot: true,
+  deliveryAt: true,
+  deliveryDropId: true,
+} as const satisfies Prisma.OrderSelect;
+type GroupingSnapshot = Prisma.OrderGetPayload<{
+  select: typeof groupingSelect;
+}>;
+
+const IMMUTABLE_DROP_STATUSES: readonly DeliveryDropStatus[] = [
+  DeliveryDropStatus.OUT_FOR_DELIVERY,
+  DeliveryDropStatus.DELIVERED,
+];
+const OVERRIDABLE_STATUSES: readonly OrderStatus[] = [
+  OrderStatus.PLACED,
+  OrderStatus.CONFIRMED,
+];
+
+/** Thrown inside a grouping transaction when the Order's grouping key moved before its row was locked. */
+class GroupingKeyChangedError extends Error {}
+
+/**
+ * Order lifecycle transitions. Every transition locks the Order row, reloads the
+ * state and applies a conditional update in one transaction; a lost race or
+ * invalid state is a 409. Transitions that touch Drop grouping follow the lock
+ * ordering documented on DeliveryGroupingService (advisory keys → Drop → Order).
+ *
+ * Repeat behaviour: place → 409 once PLACED; reject → 409 unless PLACED;
+ * cancel → idempotent no-op (no extra event) once CANCELLED.
+ */
 @Injectable()
 export class OrderLifecycleService {
   constructor(
@@ -13,177 +70,340 @@ export class OrderLifecycleService {
     private readonly creation: OrderCreationService,
     private readonly businessTime: BusinessTimeService,
     private readonly deliveryGrouping: DeliveryGroupingService,
+    private readonly validation: OrderValidationService,
   ) {}
 
+  /** Revalidates, reprices and places a DRAFT inside the locked Order transaction. */
   async place(orderId: string, actorStaffUserId: string) {
-    const order = await this.prisma.order.findUnique({ where: { id: orderId } });
-    if (!order) throw new NotFoundException('Order not found');
-    if (order.status !== OrderStatus.DRAFT) throw new ConflictException(`Cannot place order in status ${order.status}`);
-
-    // Check cutoff
-    const isOpen = await this.businessTime.isDeliveryDateOpen(order.deliveryDate.toISOString().split('T')[0]!);
-    if (!isOpen) throw new ConflictException('Cutoff has passed for this delivery date');
-
-    // We can just update the status to PLACED. The actual repricing/revalidation happens if they "edit" it. 
-    // Wait, the spec says "When an Order is PLACED: revalidate... resolve prices... recalculate... refresh snapshots... then transition".
-    // I should call an `update` method in OrderCreationService.
-    await this.creation.update(orderId, { placeOrder: true }, actorStaffUserId);
+    return this.creation.place(orderId, actorStaffUserId);
   }
 
+  /**
+   * DRAFT/PLACED → CANCELLED (not billable: billableTotalCents stays null).
+   * CONFIRMED → CANCELLED before departure: stays fully billable (billableTotalCents
+   * untouched), PrepUnits remain as history, the Order leaves its mutable
+   * DISPATCH_READY Drop, the old grouping is reconciled and an emptied Drop removed —
+   * all atomically. Once its Drop is OUT_FOR_DELIVERY or DELIVERED → 409.
+   */
   async cancel(orderId: string, actorStaffUserId: string) {
-    const order = await this.prisma.order.findUnique({ where: { id: orderId } });
-    if (!order) throw new NotFoundException('Order not found');
-
-    if (order.status === OrderStatus.CANCELLED) return;
-    if (order.status === OrderStatus.REJECTED || order.status === OrderStatus.DELIVERED) {
-      throw new ConflictException(`Cannot cancel order in status ${order.status}`);
-    }
-
-    if (order.status === OrderStatus.CONFIRMED) {
-      // Cancellation after confirmation MUST NOT remove financial liability. billableTotalCents is preserved.
-      await this.prisma.order.update({
-        where: { id: orderId },
-        data: {
-          status: OrderStatus.CANCELLED,
-          cancelledAt: new Date(),
-          events: {
-            create: { type: OrderEventType.ORDER_CANCELLED, actorStaffUserId, message: 'Order cancelled after confirmation (liability retained)' }
-          }
+    return this.inGroupingTransaction(
+      orderId,
+      () => [],
+      async (tx, order, drop) => {
+        if (order.status === OrderStatus.CANCELLED) return order;
+        if (
+          order.status === OrderStatus.REJECTED ||
+          order.status === OrderStatus.DELIVERED
+        ) {
+          throw new ConflictException(
+            `Cannot cancel order in status ${order.status}.`,
+          );
         }
-      });
-      return;
-    }
-
-    // Pre-confirmation cancellation
-    await this.prisma.order.update({
-      where: { id: orderId },
-      data: {
-        status: OrderStatus.CANCELLED,
-        cancelledAt: new Date(),
-        // financial liability removed because billableTotalCents remains null
-        events: {
-          create: { type: OrderEventType.ORDER_CANCELLED, actorStaffUserId, message: 'Order cancelled' }
+        if (drop && IMMUTABLE_DROP_STATUSES.includes(drop.status)) {
+          throw new ConflictException(
+            `Cannot cancel an order whose delivery is already ${drop.status}.`,
+          );
         }
-      }
-    });
+
+        const wasConfirmed = order.status === OrderStatus.CONFIRMED;
+        const now = new Date();
+        const { count } = await tx.order.updateMany({
+          where: { id: orderId, status: order.status },
+          data: {
+            status: OrderStatus.CANCELLED,
+            cancelledAt: now,
+            deliveryDropId: null,
+          },
+        });
+        if (count !== 1)
+          throw new ConflictException(
+            'Order changed concurrently; cancellation not applied.',
+          );
+        await tx.orderEvent.create({
+          data: {
+            orderId,
+            type: OrderEventType.ORDER_CANCELLED,
+            actorStaffUserId,
+            occurredAt: now,
+            message: wasConfirmed
+              ? 'Order cancelled after confirmation (remains billable)'
+              : 'Order cancelled',
+          },
+        });
+
+        if (wasConfirmed) {
+          // The remaining group may now be complete (or empty); reconcile under the held key lock.
+          await this.deliveryGrouping.reconcileGroup(
+            this.deliveryGrouping.getCanonicalKey(order),
+            tx,
+            order,
+          );
+          if (drop) await this.deliveryGrouping.deleteDropIfEmpty(tx, drop.id);
+        }
+        return tx.order.findUniqueOrThrow({ where: { id: orderId } });
+      },
+    );
   }
 
+  /** PLACED → REJECTED. Anything else (including an already REJECTED Order) → 409. */
   async reject(orderId: string, dto: RejectOrderDto, actorStaffUserId: string) {
-    const order = await this.prisma.order.findUnique({ where: { id: orderId } });
-    if (!order) throw new NotFoundException('Order not found');
-
-    if (order.status !== OrderStatus.PLACED) {
-      throw new ConflictException(`Only PLACED orders can be rejected (current status: ${order.status})`);
-    }
-
-    await this.prisma.order.update({
-      where: { id: orderId },
-      data: {
-        status: OrderStatus.REJECTED,
-        rejectedAt: new Date(),
-        rejectionReason: dto.rejectionReason,
-        events: {
-          create: { type: OrderEventType.ORDER_REJECTED, actorStaffUserId, message: `Order rejected: ${dto.rejectionReason}` }
-        }
+    return this.prisma.$transaction(async (tx) => {
+      const order = await this.lockAndLoad(tx, orderId);
+      if (order.status !== OrderStatus.PLACED) {
+        throw new ConflictException(
+          `Only PLACED orders can be rejected (current status: ${order.status}).`,
+        );
       }
+      const now = new Date();
+      const { count } = await tx.order.updateMany({
+        where: { id: orderId, status: OrderStatus.PLACED },
+        data: {
+          status: OrderStatus.REJECTED,
+          rejectedAt: now,
+          rejectionReason: dto.rejectionReason,
+        },
+      });
+      if (count !== 1)
+        throw new ConflictException(
+          'Order changed concurrently; rejection not applied.',
+        );
+      await tx.orderEvent.create({
+        data: {
+          orderId,
+          type: OrderEventType.ORDER_REJECTED,
+          actorStaffUserId,
+          occurredAt: now,
+          message: `Order rejected: ${dto.rejectionReason}`,
+        },
+      });
+      return tx.order.findUniqueOrThrow({ where: { id: orderId } });
     });
   }
 
-  async overrideDelivery(orderId: string, dto: OverrideDeliveryDetailsDto, actorStaffUserId: string) {
-    await this.prisma.$transaction(async (tx) => {
-      await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${orderId}::uuid FOR UPDATE`;
-      const order = await tx.order.findUnique({ 
-        where: { id: orderId },
-        include: { deliveryDrop: true }
-      });
-      if (!order) throw new NotFoundException('Order not found');
-
-      // Reject address/time changes if attached to an immutable drop
-      const isImmutableDrop = order.deliveryDrop && 
-        (order.deliveryDrop.status === DeliveryDropStatus.OUT_FOR_DELIVERY || order.deliveryDrop.status === DeliveryDropStatus.DELIVERED);
-
-      if (isImmutableDrop && (dto.deliveryAddressId || dto.deliveryAt)) {
-        throw new ConflictException(`Cannot change address or time for order in an immutable ${order.deliveryDrop!.status} drop`);
-      }
-
-      // Determine OLD canonical key
-      const oldCanonicalKey = this.deliveryGrouping.getCanonicalKey(order as any);
-      let newCanonicalKey = oldCanonicalKey;
-      let hasGroupingChange = false;
-
-      const updateData: any = {};
-      if (dto.deliveryAddressId) {
-        const addr = await tx.companyAddress.findUnique({ where: { id: dto.deliveryAddressId } });
-        if (!addr) throw new BadRequestException('Invalid address');
-        updateData.deliveryAddressId = addr.id;
-        updateData.deliveryAddressLabelSnapshot = addr.label;
-        updateData.deliveryAddressLine1Snapshot = addr.line1;
-        updateData.deliveryAddressLine2Snapshot = addr.line2;
-        updateData.deliveryAddressCitySnapshot = addr.city;
-        updateData.deliveryAddressRegionSnapshot = addr.region;
-        updateData.deliveryAddressPostalCodeSnapshot = addr.postalCode;
-        updateData.deliveryAddressCountrySnapshot = addr.country;
-        hasGroupingChange = true;
-      }
-      
-      if (dto.packagingTypeId) {
-        const pkg = await tx.packagingType.findUnique({ where: { id: dto.packagingTypeId } });
-        if (!pkg) throw new BadRequestException('Invalid packaging');
-        updateData.packagingTypeId = pkg.id;
-        updateData.packagingNameSnapshot = pkg.name;
-      }
-
-      if (dto.deliveryAt) {
-        updateData.deliveryAt = new Date(dto.deliveryAt);
-        hasGroupingChange = true;
-      }
-
-      if (Object.keys(updateData).length === 0) return; // Nothing to do
-
-      if (hasGroupingChange) {
-        // Determine NEW canonical key
-        const simulatedOrder = { ...order, ...updateData };
-        newCanonicalKey = this.deliveryGrouping.getCanonicalKey(simulatedOrder as any);
-
-        if (oldCanonicalKey !== newCanonicalKey) {
-          // Acquire locks in deterministic sorted order
-          const keysToLock = [oldCanonicalKey, newCanonicalKey].sort();
-          for (const key of keysToLock) {
-            await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`;
-          }
-
-          // Detach from current DISPATCH_READY drop if it exists
-          if (order.deliveryDropId && !isImmutableDrop) {
-            updateData.deliveryDropId = null;
-          }
-        }
-      }
-
-      // Perform the update
-      await tx.order.update({
-        where: { id: orderId },
-        data: {
-          ...updateData,
-          events: {
-            create: { type: OrderEventType.DELIVERY_DETAILS_CHANGED, actorStaffUserId, message: 'Admin delivery details overridden' }
-          }
-        }
+  /**
+   * Admin delivery override for PLACED/CONFIRMED Orders. Never reprices food or
+   * touches billableTotalCents. Address/time changes are rejected once the Drop has
+   * departed; before that they regroup atomically. Packaging-only changes never
+   * regroup. Planned Kitchen/dispatch times are derived from deliveryAt and the
+   * snapshotted lead minutes by the shared timing helper, so nothing else is stored.
+   */
+  async overrideDelivery(
+    orderId: string,
+    dto: OverrideDeliveryDetailsDto,
+    actorStaffUserId: string,
+  ) {
+    const timezone = await this.businessTime.getTimezone();
+    const requestedAt =
+      dto.deliveryAt === undefined ? undefined : new Date(dto.deliveryAt);
+    const targetKey = (snapshot: GroupingSnapshot) =>
+      this.deliveryGrouping.getCanonicalKey({
+        ...snapshot,
+        deliveryAddressId: dto.deliveryAddressId ?? snapshot.deliveryAddressId,
+        deliveryAt: requestedAt ?? snapshot.deliveryAt,
       });
 
-      // Reconcile drops if grouping changed
-      if (hasGroupingChange && oldCanonicalKey !== newCanonicalKey) {
-        await this.deliveryGrouping.reconcileGroup(oldCanonicalKey, tx);
-        const updatedOrder = await tx.order.findUnique({ where: { id: orderId } });
-        await this.deliveryGrouping.reconcileGroup(newCanonicalKey, tx, updatedOrder);
-        
-        // Cleanup old drop if it became empty and is DISPATCH_READY
-        if (order.deliveryDropId && !isImmutableDrop) {
-          const remaining = await tx.order.count({ where: { deliveryDropId: order.deliveryDropId } });
-          if (remaining === 0) {
-            await tx.deliveryDrop.delete({ where: { id: order.deliveryDropId } });
-          }
+    return this.inGroupingTransaction(
+      orderId,
+      (snapshot) => [targetKey(snapshot)],
+      async (tx, order, drop) => {
+        if (!OVERRIDABLE_STATUSES.includes(order.status)) {
+          throw new ConflictException(
+            `Delivery details cannot be overridden for an order in status ${order.status}.`,
+          );
         }
+        const data: Prisma.OrderUncheckedUpdateInput = {};
+        const changes: Record<
+          string,
+          { from: string | null; to: string | null }
+        > = {};
+
+        if (
+          dto.deliveryAddressId !== undefined &&
+          dto.deliveryAddressId !== order.deliveryAddressId
+        ) {
+          const address = await tx.companyAddress.findUnique({
+            where: { id: dto.deliveryAddressId },
+          });
+          if (
+            !address ||
+            address.companyId !== order.companyId ||
+            !address.isActive
+          ) {
+            throw new ConflictException(
+              'Delivery address must be an active address of the order’s company.',
+            );
+          }
+          Object.assign(data, {
+            deliveryAddressId: address.id,
+            deliveryAddressLabelSnapshot: address.label,
+            deliveryAddressLine1Snapshot: address.line1,
+            deliveryAddressLine2Snapshot: address.line2,
+            deliveryAddressCitySnapshot: address.city,
+            deliveryAddressRegionSnapshot: address.region,
+            deliveryAddressPostalCodeSnapshot: address.postalCode,
+            deliveryAddressCountrySnapshot: address.country,
+          } satisfies Prisma.OrderUncheckedUpdateInput);
+          changes.deliveryAddressId = {
+            from: order.deliveryAddressId,
+            to: address.id,
+          };
+        }
+
+        if (
+          requestedAt !== undefined &&
+          requestedAt.getTime() !== order.deliveryAt.getTime()
+        ) {
+          const deliveryDate = isoDateFromDbDate(order.deliveryDate);
+          if (instantToBusinessDate(requestedAt, timezone) !== deliveryDate) {
+            throw new ConflictException(
+              `deliveryAt must fall on the order's business delivery date ${deliveryDate} (${timezone}).`,
+            );
+          }
+          data.deliveryAt = requestedAt;
+          changes.deliveryAt = {
+            from: order.deliveryAt.toISOString(),
+            to: requestedAt.toISOString(),
+          };
+        }
+
+        if (
+          dto.packagingTypeId !== undefined &&
+          dto.packagingTypeId !== order.packagingTypeId
+        ) {
+          const packaging = await tx.packagingType.findFirst({
+            where: { id: dto.packagingTypeId, isActive: true },
+          });
+          if (!packaging)
+            throw new ConflictException('Packaging type must be active.');
+          data.packagingTypeId = packaging.id;
+          data.packagingNameSnapshot = packaging.name;
+          changes.packagingTypeId = {
+            from: order.packagingTypeId,
+            to: packaging.id,
+          };
+        }
+
+        const changesLocation = Boolean(
+          changes.deliveryAddressId || changes.deliveryAt,
+        );
+        if (
+          changesLocation &&
+          drop &&
+          IMMUTABLE_DROP_STATUSES.includes(drop.status)
+        ) {
+          throw new ConflictException(
+            `Cannot change address or time once the delivery is ${drop.status}.`,
+          );
+        }
+        if (Object.keys(changes).length === 0) return order;
+        await this.validation.assertCompanyDeliveryDate(
+          tx,
+          order.companyId,
+          isoDateFromDbDate(order.deliveryDate),
+        );
+
+        const oldKey = this.deliveryGrouping.getCanonicalKey(order);
+        const updatedForKey = {
+          ...order,
+          ...(data as Partial<GroupingSnapshot>),
+        };
+        const regroup =
+          this.deliveryGrouping.getCanonicalKey(updatedForKey) !== oldKey;
+        if (regroup && drop) data.deliveryDropId = null;
+
+        const updated = await tx.order.update({
+          where: { id: orderId },
+          data: {
+            ...data,
+            events: {
+              create: {
+                type: OrderEventType.DELIVERY_DETAILS_CHANGED,
+                actorStaffUserId,
+                message: 'Admin delivery details overridden',
+                metadata: changes as Prisma.InputJsonObject,
+              },
+            },
+          },
+        });
+
+        if (regroup && order.status === OrderStatus.CONFIRMED) {
+          await this.deliveryGrouping.reconcileGroup(oldKey, tx, order);
+          await this.deliveryGrouping.reconcileGroup(
+            this.deliveryGrouping.getCanonicalKey(updated),
+            tx,
+            updated,
+          );
+          if (drop) await this.deliveryGrouping.deleteDropIfEmpty(tx, drop.id);
+        }
+        return tx.order.findUniqueOrThrow({ where: { id: orderId } });
+      },
+    );
+  }
+
+  private async lockAndLoad(tx: PrismaDb, orderId: string): Promise<Order> {
+    const rows = await tx.$queryRaw<
+      Array<{ id: string }>
+    >`SELECT id FROM "Order" WHERE id = ${orderId}::uuid FOR UPDATE`;
+    if (rows.length === 0) throw new NotFoundException('Order not found.');
+    return tx.order.findUniqueOrThrow({ where: { id: orderId } });
+  }
+
+  /**
+   * Runs `work` with the global lock order: grouping advisory locks for the Order's
+   * current key (plus `extraKeys`) in sorted order, then its Drop row, then its
+   * Order row. If the key or Drop membership moved between the unlocked read and
+   * the row lock, the transaction is retried so no lock is taken out of order.
+   */
+  private async inGroupingTransaction<T>(
+    orderId: string,
+    extraKeys: (snapshot: GroupingSnapshot) => string[],
+    work: (tx: PrismaDb, order: Order, drop: DeliveryDrop | null) => Promise<T>,
+  ): Promise<T> {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await this.prisma.$transaction(async (tx) => {
+          const snapshot = await tx.order.findUnique({
+            where: { id: orderId },
+            select: groupingSelect,
+          });
+          if (!snapshot) throw new NotFoundException('Order not found.');
+          const currentKey = this.deliveryGrouping.getCanonicalKey(snapshot);
+          await this.deliveryGrouping.lockGroupingKeys(tx, [
+            currentKey,
+            ...extraKeys(snapshot),
+          ]);
+
+          // Membership is stable while the key lock is held; lock the Drop before the Order.
+          const { deliveryDropId } = await tx.order.findUniqueOrThrow({
+            where: { id: orderId },
+            select: { deliveryDropId: true },
+          });
+          let drop: DeliveryDrop | null = null;
+          if (deliveryDropId) {
+            await tx.$queryRaw`SELECT id FROM "DeliveryDrop" WHERE id = ${deliveryDropId}::uuid FOR UPDATE`;
+            drop = await tx.deliveryDrop.findUnique({
+              where: { id: deliveryDropId },
+            });
+          }
+
+          const order = await this.lockAndLoad(tx, orderId);
+          if (
+            this.deliveryGrouping.getCanonicalKey(order) !== currentKey ||
+            order.deliveryDropId !== deliveryDropId
+          ) {
+            throw new GroupingKeyChangedError();
+          }
+          return work(tx, order, drop);
+        });
+      } catch (error) {
+        if (error instanceof GroupingKeyChangedError) {
+          if (attempt < 3) continue;
+          throw new ConflictException(
+            'Order delivery grouping changed concurrently; please retry.',
+          );
+        }
+        throw error;
       }
-    });
+    }
   }
 }

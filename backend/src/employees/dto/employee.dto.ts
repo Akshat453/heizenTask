@@ -1,5 +1,13 @@
-import { Type } from 'class-transformer';
-import { ArrayUnique, IsArray, IsBoolean, IsEmail, IsOptional, IsString, IsUUID, MaxLength, ValidateNested } from 'class-validator';
+import {
+  ArrayUnique,
+  IsArray,
+  IsBoolean,
+  IsEmail,
+  IsOptional,
+  IsString,
+  IsUUID,
+  MaxLength,
+} from 'class-validator';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto.js';
 
 export class EmployeeQueryDto extends PaginationQueryDto {
@@ -13,8 +21,14 @@ export class CreateEmployeeDto {
   @IsBoolean() canChooseDeliveryAddress!: boolean;
   @IsBoolean() canChangeDeliveryTime!: boolean;
   @IsBoolean() canChangePackaging!: boolean;
-  @IsArray() @ArrayUnique() @IsUUID('4', { each: true }) allergenIds!: string[];
-  @IsArray() @ArrayUnique() @IsUUID('4', { each: true }) dietaryTagIds!: string[];
+  @IsArray()
+  @ArrayUnique()
+  @IsUUID('all', { each: true })
+  allergenIds!: string[];
+  @IsArray()
+  @ArrayUnique()
+  @IsUUID('all', { each: true })
+  dietaryTagIds!: string[];
 }
 
 export class UpdateEmployeeDto {
@@ -25,6 +39,14 @@ export class UpdateEmployeeDto {
   @IsOptional() @IsBoolean() canChooseDeliveryAddress?: boolean;
   @IsOptional() @IsBoolean() canChangeDeliveryTime?: boolean;
   @IsOptional() @IsBoolean() canChangePackaging?: boolean;
-  @IsOptional() @IsArray() @ArrayUnique() @IsUUID('4', { each: true }) allergenIds?: string[];
-  @IsOptional() @IsArray() @ArrayUnique() @IsUUID('4', { each: true }) dietaryTagIds?: string[];
+  @IsOptional()
+  @IsArray()
+  @ArrayUnique()
+  @IsUUID('all', { each: true })
+  allergenIds?: string[];
+  @IsOptional()
+  @IsArray()
+  @ArrayUnique()
+  @IsUUID('all', { each: true })
+  dietaryTagIds?: string[];
 }

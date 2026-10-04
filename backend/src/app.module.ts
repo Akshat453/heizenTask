@@ -1,11 +1,12 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD } from '@nestjs/core';
 import { AuthModule } from './auth/auth.module.js';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard.js';
 import { BusinessTimeModule } from './business-time/business-time.module.js';
 import { CatalogueModule } from './catalogue/catalogue.module.js';
 import { PermissionsGuard } from './common/guards/permissions.guard.js';
+import { PrismaExceptionFilter } from './common/filters/prisma-exception.filter.js';
 import { CompaniesModule } from './companies/companies.module.js';
 import { validateEnvironment } from './config/environment.js';
 import { EmployeesModule } from './employees/employees.module.js';
@@ -56,6 +57,10 @@ import { DashboardModule } from './dashboard/dashboard.module.js';
     {
       provide: APP_GUARD,
       useClass: PermissionsGuard,
+    },
+    {
+      provide: APP_FILTER,
+      useClass: PrismaExceptionFilter,
     },
   ],
 })

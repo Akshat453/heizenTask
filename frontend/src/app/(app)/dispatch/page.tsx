@@ -8,72 +8,64 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { format } from "date-fns";
 import { Badge } from "@/components/ui/badge";
-import { apiRequest } from "@/lib/api-client";
+import { describeError } from "@/lib/api-client";
+import { DROP_STATUS_LABEL, dispatchApi, type DispatchDrop } from "@/lib/api";
 
 export default function DispatchPage() {
-  const { user, can } = useAuth();
+  const { can } = useAuth();
+  // Initial filter only; every query is evaluated in the configured business timezone by the API.
   const [date, setDate] = useState(format(new Date(), "yyyy-MM-dd"));
-  const [drops, setDrops] = useState<any[]>([]);
+  const [drops, setDrops] = useState<DispatchDrop[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
-  const fetchDrops = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const data = await apiRequest<{data: any[]}>(`/dispatch/drops?date=${date}`);
-      setDrops(data.data);
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
-    fetchDrops();
-  }, [date]);
+    let active = true;
+    dispatchApi
+      .list(date)
+      .then((response) => {
+        if (!active) return;
+        setDrops(response.data);
+        setError(null);
+      })
+      .catch((err: unknown) => active && setError(describeError(err)))
+      .finally(() => active && setLoading(false));
+    return () => {
+      active = false;
+    };
+  }, [date, refreshKey]);
 
-  const reconcile = async () => {
+  const refresh = () => {
+    setLoading(true);
+    setRefreshKey((key) => key + 1);
+  };
+
+  const run = async (action: () => Promise<unknown>) => {
     try {
-      await apiRequest("/dispatch/drops/reconcile", { method: "POST" });
-      fetchDrops();
-    } catch (err: any) {
-      alert(err.message);
+      await action();
+      refresh();
+    } catch (err: unknown) {
+      alert(describeError(err));
     }
   };
 
-  const assignDriver = async (dropId: string) => {
+  const reconcile = () => run(() => dispatchApi.reconcile());
+
+  const assignDriver = (dropId: string) => {
     const driverId = prompt("Enter driver ID (UUID):");
     if (!driverId) return;
-    try {
-      await apiRequest(`/dispatch/drops/${dropId}/assign-driver`, {
-        method: "POST",
-        body: JSON.stringify({ driverId }),
-      });
-      fetchDrops();
-    } catch (err: any) {
-      alert(err.message);
-    }
+    return run(() => dispatchApi.assignDriver(dropId, driverId));
   };
 
-  const markOutForDelivery = async (dropId: string) => {
-    try {
-      await apiRequest(`/dispatch/drops/${dropId}/out-for-delivery`, {
-        method: "POST",
-      });
-      fetchDrops();
-    } catch (err: any) {
-      alert(err.message);
-    }
-  };
+  const markOutForDelivery = (dropId: string) => run(() => dispatchApi.outForDelivery(dropId));
 
   const viewProof = async (dropId: string) => {
     try {
-      const data = await apiRequest<{url: string}>(`/dispatch/drops/${dropId}/proof-url`);
-      window.open(data.url, "_blank");
-    } catch (err: any) {
-      alert(err.message);
+      const { url } = await dispatchApi.proofUrl(dropId);
+      window.open(url, "_blank", "noopener,noreferrer");
+    } catch (err: unknown) {
+      alert(describeError(err));
     }
   };
 
@@ -98,9 +90,9 @@ export default function DispatchPage() {
       <div className="flex items-end gap-4 bg-card p-4 rounded-xl border border-border/40 shadow-sm">
         <div className="space-y-2">
           <Label>Business Date</Label>
-          <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-[200px]" />
+          <Input type="date" value={date} onChange={(e) => { setLoading(true); setDate(e.target.value); }} className="w-[200px]" />
         </div>
-        <Button onClick={fetchDrops} variant="secondary">Refresh</Button>
+        <Button onClick={refresh} variant="secondary">Refresh</Button>
       </div>
 
       {loading ? (
@@ -123,8 +115,11 @@ export default function DispatchPage() {
                       drop.status === "DELIVERED" ? "secondary" : 
                       drop.status === "OUT_FOR_DELIVERY" ? "default" : "outline"
                     }>
-                      {drop.status}
+                      {DROP_STATUS_LABEL[drop.status]}
                     </Badge>
+                    {drop.onTime !== null && (
+                      <Badge variant={drop.onTime ? "secondary" : "destructive"}>{drop.onTime ? "On time" : "Late"}</Badge>
+                    )}
                   </CardTitle>
                   <p className="text-sm text-muted-foreground mt-1.5 font-medium">
                     {new Date(drop.scheduledDeliveryAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} • {drop.addressLabelSnapshot}

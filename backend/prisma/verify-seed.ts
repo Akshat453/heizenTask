@@ -34,6 +34,13 @@ function plainDate(value: Date): PlainDate {
   };
 }
 
+/** Must match prisma/seed.ts: 16 scenario orders + 28 review-window days + 7 history days. */
+const REVIEW_WINDOW_DAYS = 28;
+const HISTORY_DAYS = 7;
+const EXPECTED_DEMO_ORDERS = 16 + REVIEW_WINDOW_DAYS + HISTORY_DAYS;
+/** Reviewers must always see at least two weeks of forward data. */
+const REQUIRED_COVERAGE_DAYS = 14;
+
 async function verifyAccounts() {
   const expected = [
     ['admin@test.com', 'ADMIN'],
@@ -313,8 +320,8 @@ async function verifyOrders(today: PlainDate) {
   });
   assert.equal(
     orders.length,
-    30,
-    'The deterministic demo order set must contain 30 orders.',
+    EXPECTED_DEMO_ORDERS,
+    `The deterministic demo order set must contain ${EXPECTED_DEMO_ORDERS} orders.`,
   );
   for (const status of Object.values(OrderStatus)) {
     assert(
@@ -493,27 +500,43 @@ async function verifyOrders(today: PlainDate) {
     (order) => order.status === OrderStatus.REJECTED,
   )!;
   assert.equal(rejected.billableTotalCents, null);
-  for (let dayOffset = 1; dayOffset <= 14; dayOffset += 1) {
-    const key = String(dayOffset).padStart(2, '0');
-    const windowOrder = orders.find(
-      (order) => order.orderNumber === `DEMO-WINDOW-${key}`,
+  // Coverage relative to the CURRENT business date (not to the seed-run date): every
+  // day from today through +14 has an order in a Drop assigned to the demo driver.
+  for (let dayOffset = 0; dayOffset <= REQUIRED_COVERAGE_DAYS; dayOffset += 1) {
+    const date = dateKey(addDays(today, dayOffset));
+    const covered = orders.some(
+      (order) =>
+        dateKey(plainDate(order.deliveryDate)) === date &&
+        order.deliveryDrop?.driver?.email === 'driver@test.com' &&
+        (order.status === OrderStatus.CONFIRMED || order.status === OrderStatus.DELIVERED),
     );
-    assert(windowOrder, `Review-window order ${key} is missing.`);
-    assert.equal(
-      dateKey(plainDate(windowOrder.deliveryDate)),
-      dateKey(addDays(today, dayOffset)),
-      `Review-window order ${key} is on the wrong date.`,
-    );
-    assert.equal(windowOrder.status, OrderStatus.CONFIRMED);
-    assert.equal(
-      windowOrder.deliveryDrop?.status,
-      DeliveryDropStatus.DISPATCH_READY,
-    );
-    assert.equal(
-      windowOrder.deliveryDrop?.driver?.email,
-      'driver@test.com',
-      `Review-window date ${key} is not assigned to the demo driver.`,
-    );
+    assert(covered, `No driver-assigned demo delivery on ${date} (today+${dayOffset}).`);
+  }
+  for (const windowOrder of orders.filter((order) => order.orderNumber.startsWith('DEMO-WINDOW-'))) {
+    assert.equal(windowOrder.status, OrderStatus.CONFIRMED, `${windowOrder.orderNumber} must be CONFIRMED.`);
+    assert.equal(windowOrder.deliveryDrop?.status, DeliveryDropStatus.DISPATCH_READY, `${windowOrder.orderNumber} must be dispatch-ready.`);
+    assert.equal(windowOrder.deliveryDrop?.driver?.email, 'driver@test.com', `${windowOrder.orderNumber} is not assigned to the demo driver.`);
+  }
+
+  // Seed data follows the same lifecycle semantics as the running application.
+  for (const order of orders) {
+    const dropStatus = order.deliveryDrop?.status;
+    if (dropStatus === DeliveryDropStatus.DELIVERED) {
+      assert.equal(order.status, OrderStatus.DELIVERED, `${order.orderNumber} is in a delivered Drop but not DELIVERED.`);
+    }
+    if (dropStatus === DeliveryDropStatus.DISPATCH_READY || dropStatus === DeliveryDropStatus.OUT_FOR_DELIVERY) {
+      assert.equal(order.status, OrderStatus.CONFIRMED, `${order.orderNumber} is in an active Drop but not CONFIRMED.`);
+      assert(order.kitchenReadyAt, `${order.orderNumber} is in a Drop before it is Kitchen-ready.`);
+    }
+    if (order.status === OrderStatus.DELIVERED) {
+      assert.equal(dropStatus, DeliveryDropStatus.DELIVERED, `${order.orderNumber} is DELIVERED without a delivered Drop.`);
+    }
+    if (order.status === OrderStatus.CANCELLED || order.status === OrderStatus.REJECTED || order.status === OrderStatus.DRAFT || order.status === OrderStatus.PLACED) {
+      assert.equal(order.deliveryDropId, null, `${order.orderNumber} (${order.status}) must not belong to a Drop.`);
+    }
+    if (order.deliveryDrop?.photoUrl) {
+      assert(!/^https?:/i.test(order.deliveryDrop.photoUrl), 'Drop.photoUrl must hold a private object key, not a URL.');
+    }
   }
   const cutoffTables = await prisma.$queryRawUnsafe<unknown[]>(
     `SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'CutoffRun'`,
@@ -602,7 +625,7 @@ async function verifyOperations(today: PlainDate) {
   const reviewDrops = await prisma.deliveryDrop.findMany({
     where: {
       id: {
-        in: Array.from({ length: 14 }, (_, index) =>
+        in: Array.from({ length: REVIEW_WINDOW_DAYS }, (_, index) =>
           seedId(`drop:review-day-${String(index + 1).padStart(2, '0')}`),
         ),
       },
@@ -612,7 +635,7 @@ async function verifyOperations(today: PlainDate) {
   });
   assert.equal(
     reviewDrops.length,
-    14,
+    REVIEW_WINDOW_DAYS,
     'Every future review date needs a deterministic driver drop.',
   );
   assert(
@@ -631,6 +654,13 @@ async function verifyOperations(today: PlainDate) {
     },
   });
   assert(historicalDelivered, 'Historical delivered order is missing.');
+  const historyDrops = await prisma.deliveryDrop.findMany({
+    where: { id: { in: Array.from({ length: HISTORY_DAYS }, (_, index) => seedId(`drop:history-day-${String(index + 1).padStart(2, '0')}`)) } },
+  });
+  assert.equal(historyDrops.length, HISTORY_DAYS, 'Every history day needs a delivered Drop.');
+  assert(historyDrops.every((drop) => drop.status === DeliveryDropStatus.DELIVERED && drop.deliveredAt), 'History drops must be delivered.');
+  const onTime = historyDrops.map((drop) => drop.deliveredAt!.getTime() <= drop.scheduledDeliveryAt.getTime());
+  assert(onTime.includes(true) && onTime.includes(false), 'History drops must include both on-time and late deliveries.');
 }
 
 async function verifyBilling() {

@@ -1,5 +1,20 @@
 import { Type } from 'class-transformer';
-import { ArrayMinSize, ArrayUnique, IsArray, IsBoolean, IsEmail, IsEnum, IsInt, IsOptional, IsString, IsUUID, Matches, MaxLength, Min, ValidateNested } from 'class-validator';
+import {
+  ArrayMinSize,
+  ArrayUnique,
+  IsArray,
+  IsBoolean,
+  IsEmail,
+  IsEnum,
+  IsInt,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Matches,
+  MaxLength,
+  Min,
+  ValidateNested,
+} from 'class-validator';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto.js';
 import { DayOfWeek } from '../../generated/prisma/enums.js';
 
@@ -29,8 +44,14 @@ export class OwnerEmployeeInputDto {
   @IsOptional() @IsBoolean() canChooseDeliveryAddress?: boolean;
   @IsOptional() @IsBoolean() canChangeDeliveryTime?: boolean;
   @IsOptional() @IsBoolean() canChangePackaging?: boolean;
-  @IsArray() @ArrayUnique() @IsUUID('4', { each: true }) allergenIds!: string[];
-  @IsArray() @ArrayUnique() @IsUUID('4', { each: true }) dietaryTagIds!: string[];
+  @IsArray()
+  @ArrayUnique()
+  @IsUUID('all', { each: true })
+  allergenIds!: string[];
+  @IsArray()
+  @ArrayUnique()
+  @IsUUID('all', { each: true })
+  dietaryTagIds!: string[];
 }
 
 export class CreateCompanyDto {
@@ -38,19 +59,43 @@ export class CreateCompanyDto {
   @IsString() @MaxLength(160) billingContactName!: string;
   @IsEmail() @MaxLength(320) billingContactEmail!: string;
   @IsOptional() @IsString() @MaxLength(40) billingContactPhone?: string | null;
-  @IsArray() @ArrayMinSize(1) @ArrayUnique() @IsString({ each: true }) domains!: string[];
-  @IsArray() @ArrayMinSize(1) @ValidateNested({ each: true }) @Type(() => CompanyAddressInputDto) addresses!: CompanyAddressInputDto[];
-  @ValidateNested() @Type(() => OwnerEmployeeInputDto) owner!: OwnerEmployeeInputDto;
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayUnique()
+  @IsString({ each: true })
+  domains!: string[];
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => CompanyAddressInputDto)
+  addresses!: CompanyAddressInputDto[];
+  @ValidateNested()
+  @Type(() => OwnerEmployeeInputDto)
+  owner!: OwnerEmployeeInputDto;
   @IsOptional() @IsUUID() priceTierId?: string | null;
   @Matches(/^([01]\d|2[0-3]):[0-5]\d$/) defaultDeliveryTime!: string;
   @Type(() => Number) @IsInt() @Min(0) deliveryLeadMinutes!: number;
   @IsUUID() defaultPackagingTypeId!: string;
-  @IsOptional() @IsString() @MaxLength(1_000) driverInstructions?: string | null;
+  @IsOptional() @IsString() @MaxLength(1_000) driverInstructions?:
+    string | null;
   @IsOptional() @IsUUID() defaultDriverStaffUserId?: string | null;
-  @IsArray() @ArrayMinSize(1) @ArrayUnique() @IsEnum(DayOfWeek, { each: true }) workingDays!: DayOfWeek[];
-  @IsArray() @ValidateNested({ each: true }) @Type(() => CompanyHolidayInputDto) holidays!: CompanyHolidayInputDto[];
-  @IsArray() @ArrayUnique() @IsUUID('4', { each: true }) hiddenCategoryIds!: string[];
-  @IsArray() @ArrayUnique() @IsUUID('4', { each: true }) hiddenDishIds!: string[];
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayUnique()
+  @IsEnum(DayOfWeek, { each: true })
+  workingDays!: DayOfWeek[];
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CompanyHolidayInputDto)
+  holidays!: CompanyHolidayInputDto[];
+  @IsArray()
+  @ArrayUnique()
+  @IsUUID('all', { each: true })
+  hiddenCategoryIds!: string[];
+  @IsArray()
+  @ArrayUnique()
+  @IsUUID('all', { each: true })
+  hiddenDishIds!: string[];
 }
 
 export class UpdateCompanyDto {
@@ -58,17 +103,51 @@ export class UpdateCompanyDto {
   @IsOptional() @IsString() @MaxLength(160) billingContactName?: string;
   @IsOptional() @IsEmail() @MaxLength(320) billingContactEmail?: string;
   @IsOptional() @IsString() @MaxLength(40) billingContactPhone?: string | null;
-  @IsOptional() @IsArray() @ArrayMinSize(1) @ArrayUnique() @IsString({ each: true }) domains?: string[];
-  @IsOptional() @IsArray() @ArrayMinSize(1) @ValidateNested({ each: true }) @Type(() => CompanyAddressInputDto) addresses?: CompanyAddressInputDto[];
+  @IsOptional()
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayUnique()
+  @IsString({ each: true })
+  domains?: string[];
+  @IsOptional()
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => CompanyAddressInputDto)
+  addresses?: CompanyAddressInputDto[];
   @IsOptional() @IsUUID() ownerEmployeeId?: string;
   @IsOptional() @IsUUID() priceTierId?: string | null;
-  @IsOptional() @Matches(/^([01]\d|2[0-3]):[0-5]\d$/) defaultDeliveryTime?: string;
-  @IsOptional() @Type(() => Number) @IsInt() @Min(0) deliveryLeadMinutes?: number;
+  @IsOptional()
+  @Matches(/^([01]\d|2[0-3]):[0-5]\d$/)
+  defaultDeliveryTime?: string;
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  deliveryLeadMinutes?: number;
   @IsOptional() @IsUUID() defaultPackagingTypeId?: string;
-  @IsOptional() @IsString() @MaxLength(1_000) driverInstructions?: string | null;
+  @IsOptional() @IsString() @MaxLength(1_000) driverInstructions?:
+    string | null;
   @IsOptional() @IsUUID() defaultDriverStaffUserId?: string | null;
-  @IsOptional() @IsArray() @ArrayMinSize(1) @ArrayUnique() @IsEnum(DayOfWeek, { each: true }) workingDays?: DayOfWeek[];
-  @IsOptional() @IsArray() @ValidateNested({ each: true }) @Type(() => CompanyHolidayInputDto) holidays?: CompanyHolidayInputDto[];
-  @IsOptional() @IsArray() @ArrayUnique() @IsUUID('4', { each: true }) hiddenCategoryIds?: string[];
-  @IsOptional() @IsArray() @ArrayUnique() @IsUUID('4', { each: true }) hiddenDishIds?: string[];
+  @IsOptional()
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayUnique()
+  @IsEnum(DayOfWeek, { each: true })
+  workingDays?: DayOfWeek[];
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CompanyHolidayInputDto)
+  holidays?: CompanyHolidayInputDto[];
+  @IsOptional()
+  @IsArray()
+  @ArrayUnique()
+  @IsUUID('all', { each: true })
+  hiddenCategoryIds?: string[];
+  @IsOptional()
+  @IsArray()
+  @ArrayUnique()
+  @IsUUID('all', { each: true })
+  hiddenDishIds?: string[];
 }

@@ -10,7 +10,13 @@ export class PrismaService extends PrismaClient implements OnModuleDestroy {
       connectionString: config.getOrThrow<string>('DATABASE_URL'),
     });
 
-    super({ adapter });
+    // Interactive transactions may wait on row/advisory locks, and a remote
+    // database (e.g. Neon, ~250ms RTT) makes each statement slow, so Prisma's
+    // 2s maxWait / 5s timeout defaults are too tight.
+    super({
+      adapter,
+      transactionOptions: { maxWait: 10_000, timeout: 30_000 },
+    });
   }
 
   async onModuleDestroy(): Promise<void> {

@@ -2,10 +2,16 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service.js';
 import { SettingsService } from '../../settings/settings.service.js';
 import { OrderStatus } from '../../generated/prisma/enums.js';
-import { calculatePlannedKitchenReadyAt } from './kitchen-timing.helper.js';
+import type { Prisma } from '../../generated/prisma/client.js';
+import { dbDateFromIsoDate } from '../../business-time/business-time.utils.js';
+import {
+  calculatePlannedKitchenReadyAt,
+  classifyKitchenTiming,
+  type KitchenTimingState,
+} from './kitchen-timing.helper.js';
 
 export type KitchenPrepState = 'NOT_STARTED' | 'STARTED' | 'DONE';
-export type KitchenTimingState = 'ON_TRACK' | 'AT_RISK' | 'LATE' | 'COMPLETE';
+export type { KitchenTimingState };
 
 export interface KitchenBoardItem {
   id: string; // prepUnit id
@@ -16,7 +22,7 @@ export interface KitchenBoardItem {
   deliveryDate: Date;
   deliveryAt: Date;
   plannedKitchenReadyAt: Date;
-  
+
   dishNameSnapshot: string;
   quantity: number;
   stationId: string | null;
@@ -41,17 +47,19 @@ export class KitchenQueryService {
     private readonly settingsService: SettingsService,
   ) {}
 
-  async getKitchenBoard(dateStr: string, stationIdFilter?: string): Promise<KitchenBoardItem[]> {
-    const date = new Date(dateStr);
+  async getKitchenBoard(
+    dateStr: string,
+    stationIdFilter?: string,
+  ): Promise<KitchenBoardItem[]> {
+    const date = dbDateFromIsoDate(dateStr);
     const settings = await this.settingsService.getSettings();
-    const atRiskWindowMs = (settings.settings.atRiskWindowMinutes || 30) * 60 * 1000;
     const now = new Date();
 
-    const where: any = {
+    const where: Prisma.PrepUnitWhereInput = {
       order: {
         deliveryDate: date,
         status: OrderStatus.CONFIRMED,
-      }
+      },
     };
 
     if (stationIdFilter === 'unassigned') {
@@ -73,26 +81,26 @@ export class KitchenQueryService {
             kitchenReadyAt: true,
             company: { select: { name: true } },
             employee: { select: { name: true } },
-          }
+          },
         },
         combination: {
           include: {
             orderLine: {
-              select: { dishNameSnapshot: true }
+              select: { dishNameSnapshot: true },
             },
             options: true,
-          }
-        }
-      }
+          },
+        },
+      },
     });
 
-    const items: KitchenBoardItem[] = prepUnits.map(unit => {
+    const items: KitchenBoardItem[] = prepUnits.map((unit) => {
       const plannedKitchenReadyAt = calculatePlannedKitchenReadyAt(
         unit.order.deliveryAt,
         unit.order.deliveryLeadMinutesSnapshot,
         settings.settings.kitchenReadyBufferMinutes,
       );
-      
+
       let prepState: KitchenPrepState = 'NOT_STARTED';
       if (unit.doneAt) {
         prepState = 'DONE';
@@ -100,14 +108,12 @@ export class KitchenQueryService {
         prepState = 'STARTED';
       }
 
-      let timingState: KitchenTimingState = 'ON_TRACK';
-      if (unit.order.kitchenReadyAt || unit.doneAt) {
-        timingState = 'COMPLETE';
-      } else if (now.getTime() >= plannedKitchenReadyAt.getTime()) {
-        timingState = 'LATE';
-      } else if (now.getTime() >= plannedKitchenReadyAt.getTime() - atRiskWindowMs) {
-        timingState = 'AT_RISK';
-      }
+      const timingState = classifyKitchenTiming({
+        plannedKitchenReadyAt,
+        now,
+        atRiskWindowMinutes: settings.settings.atRiskWindowMinutes,
+        complete: Boolean(unit.order.kitchenReadyAt || unit.doneAt),
+      });
 
       return {
         id: unit.id,
@@ -118,12 +124,12 @@ export class KitchenQueryService {
         deliveryDate: unit.order.deliveryDate,
         deliveryAt: unit.order.deliveryAt,
         plannedKitchenReadyAt,
-        
+
         dishNameSnapshot: unit.combination.orderLine.dishNameSnapshot,
         quantity: unit.quantity,
         stationId: unit.stationId,
         stationNameSnapshot: unit.stationNameSnapshot,
-        options: unit.combination.options.map(o => ({
+        options: unit.combination.options.map((o) => ({
           optionGroupNameSnapshot: o.optionGroupNameSnapshot,
           optionNameSnapshot: o.optionNameSnapshot,
           portionNameSnapshot: o.portionNameSnapshot,
@@ -141,7 +147,9 @@ export class KitchenQueryService {
     items.sort((a, b) => {
       if (a.prepState === 'DONE' && b.prepState !== 'DONE') return 1;
       if (a.prepState !== 'DONE' && b.prepState === 'DONE') return -1;
-      return a.plannedKitchenReadyAt.getTime() - b.plannedKitchenReadyAt.getTime();
+      return (
+        a.plannedKitchenReadyAt.getTime() - b.plannedKitchenReadyAt.getTime()
+      );
     });
 
     return items;

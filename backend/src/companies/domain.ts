@@ -1,8 +1,16 @@
 import { BadRequestException } from '@nestjs/common';
 
 const PUBLIC_DOMAINS = new Set([
-  'gmail.com', 'googlemail.com', 'outlook.com', 'hotmail.com', 'live.com',
-  'yahoo.com', 'icloud.com', 'aol.com', 'proton.me', 'protonmail.com',
+  'gmail.com',
+  'googlemail.com',
+  'outlook.com',
+  'hotmail.com',
+  'live.com',
+  'yahoo.com',
+  'icloud.com',
+  'aol.com',
+  'proton.me',
+  'protonmail.com',
 ]);
 
 export function normalizeCompanyDomain(input: string): string {
@@ -15,10 +23,17 @@ export function normalizeCompanyDomain(input: string): string {
   } catch {
     throw new BadRequestException('Company domain is invalid.');
   }
-  if (!/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(value)) {
+  if (
+    !/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(
+      value,
+    )
+  ) {
     throw new BadRequestException('Company domain is invalid.');
   }
-  if (PUBLIC_DOMAINS.has(value)) throw new BadRequestException('Public email domains cannot be used for a company.');
+  if (PUBLIC_DOMAINS.has(value))
+    throw new BadRequestException(
+      'Public email domains cannot be used for a company.',
+    );
   return value;
 }
 

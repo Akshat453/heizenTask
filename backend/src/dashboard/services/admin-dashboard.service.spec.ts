@@ -3,7 +3,6 @@ import { AdminDashboardService } from './admin-dashboard.service.js';
 import { PrismaService } from '../../prisma/prisma.service.js';
 import { BusinessTimeService } from '../../business-time/business-time.service.js';
 import { SettingsService } from '../../settings/settings.service.js';
-import { OrderStatus, DeliveryDropStatus } from '../../generated/prisma/enums.js';
 
 describe('AdminDashboardService', () => {
   let service: AdminDashboardService;
@@ -44,8 +43,12 @@ describe('AdminDashboardService', () => {
 
   it('should calculate metrics correctly', async () => {
     prisma.order.count.mockResolvedValue(10);
-    prisma.order.aggregate.mockResolvedValueOnce({ _sum: { billableTotalCents: 5000 } });
-    prisma.order.aggregate.mockResolvedValueOnce({ _sum: { billableTotalCents: 10000 } });
+    prisma.order.aggregate.mockResolvedValueOnce({
+      _sum: { billableTotalCents: 5000 },
+    });
+    prisma.order.aggregate.mockResolvedValueOnce({
+      _sum: { billableTotalCents: 10000 },
+    });
     prisma.deliveryDrop.count.mockResolvedValue(5);
 
     const now = new Date();
@@ -68,12 +71,12 @@ describe('AdminDashboardService', () => {
     ]);
 
     const result = await service.getAdminDashboard();
-    
+
     expect(result.metrics.todayOrders).toBe(10);
     expect(result.metrics.todayBillableCents).toBe(5000);
     expect(result.metrics.uninvoicedCents).toBe(10000);
     expect(result.metrics.activeDeliveries).toBe(5);
-    
+
     // Only ordB is late.
     expect(result.metrics.lateKitchenOrders).toBe(1);
     expect(result.metrics.latePrepUnits).toBe(3);

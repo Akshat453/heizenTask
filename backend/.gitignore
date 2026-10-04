@@ -10,3 +10,5 @@ dist/
 .windsurf/
 .claude/
 .agents/
+# TypeScript incremental build state (generated)
+*.tsbuildinfo

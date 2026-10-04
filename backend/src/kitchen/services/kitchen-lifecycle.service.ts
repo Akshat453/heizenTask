@@ -1,145 +1,123 @@
-import { Injectable, NotFoundException, ConflictException, ForbiddenException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service.js';
-import { OrderStatus } from '../../generated/prisma/enums.js';
+import { OrderEventType, OrderStatus } from '../../generated/prisma/enums.js';
 import { DeliveryGroupingService } from '../../dispatch/services/delivery-grouping.service.js';
+import type { PrismaDb } from '../../pricing/price-resolver.service.js';
 
+/**
+ * Result of the post-commit Kitchen → Dispatch hand-off. Grouping runs after the
+ * Kitchen transaction commits (Kitchen work is never rolled back by a grouping
+ * problem); a failure is reported here and repaired idempotently by
+ * POST /dispatch/drops/reconcile.
+ */
+export type DispatchHandoff =
+  | { status: 'NOT_READY' }
+  | { status: 'GROUPED'; dropId: string | null }
+  | {
+      status: 'FAILED';
+      message: string;
+      recovery: 'POST /dispatch/drops/reconcile';
+    };
+
+export type KitchenTransitionResult = {
+  success: true;
+  orderId: string;
+  kitchenReady: boolean;
+  dispatch: DispatchHandoff;
+};
+
+/**
+ * Kitchen transitions lock the parent Order row (FOR UPDATE) so PrepUnit changes,
+ * Order.kitchenStartedAt/kitchenReadyAt and their KITCHEN_STARTED/KITCHEN_READY
+ * events are written together, exactly once, even when the final PrepUnits finish
+ * concurrently. Only Order row locks are taken here (see DeliveryGroupingService
+ * lock ordering).
+ */
 @Injectable()
 export class KitchenLifecycleService {
+  private readonly logger = new Logger(KitchenLifecycleService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly deliveryGrouping: DeliveryGroupingService,
   ) {}
 
-  async startPrepUnit(prepUnitId: string, staffUserId: string) {
-    return this.prisma.$transaction(async (tx) => {
-      const pu = await tx.prepUnit.findUnique({ where: { id: prepUnitId } });
-      if (!pu) throw new NotFoundException('PrepUnit not found');
-
-      // 1. Lock the Order
-      await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${pu.orderId}::uuid FOR UPDATE`;
-
-      // 2. Validate Order status
-      const order = await tx.order.findUnique({ where: { id: pu.orderId } });
-      if (order?.status !== OrderStatus.CONFIRMED) {
-        throw new ConflictException('Order is not CONFIRMED');
-      }
-
-      // 3. Recheck PrepUnit
-      const currentPu = await tx.prepUnit.findUnique({ where: { id: prepUnitId } });
-      if (currentPu?.startedAt || currentPu?.doneAt) {
-        throw new ConflictException('PrepUnit is already started or done');
-      }
-
-      // 4. Update PrepUnit
+  async startPrepUnit(
+    prepUnitId: string,
+    staffUserId: string,
+  ): Promise<KitchenTransitionResult> {
+    const orderId = await this.prisma.$transaction(async (tx) => {
+      const unit = await this.lockPrepUnitOrder(tx, prepUnitId);
+      if (unit.startedAt || unit.doneAt)
+        throw new ConflictException('PrepUnit is already started or done.');
       const now = new Date();
-      await tx.prepUnit.update({
-        where: { id: prepUnitId },
+      const { count } = await tx.prepUnit.updateMany({
+        where: { id: prepUnitId, startedAt: null, doneAt: null },
         data: { startedAt: now, startedByStaffUserId: staffUserId },
       });
-
-      // 5. Update Order.kitchenStartedAt if needed
-      if (!order.kitchenStartedAt) {
-        await tx.order.update({
-          where: { id: order.id },
-          data: { kitchenStartedAt: now },
-        });
-      }
-
-      return { success: true };
+      if (count !== 1)
+        throw new ConflictException('PrepUnit changed concurrently.');
+      await this.markKitchenStarted(tx, unit.orderId, staffUserId, now);
+      return unit.orderId;
     });
+    return {
+      success: true,
+      orderId,
+      kitchenReady: false,
+      dispatch: { status: 'NOT_READY' },
+    };
   }
 
-  async completePrepUnit(prepUnitId: string, staffUserId: string) {
-    let isKitchenReady = false;
-    let orderIdForGrouping = '';
-
-    const res = await this.prisma.$transaction(async (tx) => {
-      const pu = await tx.prepUnit.findUnique({ where: { id: prepUnitId } });
-      if (!pu) throw new NotFoundException('PrepUnit not found');
-      orderIdForGrouping = pu.orderId;
-
-      // 1. Lock the Order
-      await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${pu.orderId}::uuid FOR UPDATE`;
-
-      // 2. Validate Order status
-      const order = await tx.order.findUnique({ where: { id: pu.orderId } });
-      if (order?.status !== OrderStatus.CONFIRMED) {
-        throw new ConflictException('Order is not CONFIRMED');
-      }
-
-      // 3. Recheck PrepUnit
-      const currentPu = await tx.prepUnit.findUnique({ where: { id: prepUnitId } });
-      if (currentPu?.doneAt) {
-        throw new ConflictException('PrepUnit is already done');
-      }
-
-      const now = new Date();
-      const updateData: any = { doneAt: now, doneByStaffUserId: staffUserId };
-
-      // Finish unstarted records start too
-      if (!currentPu?.startedAt) {
-        updateData.startedAt = now;
-        updateData.startedByStaffUserId = staffUserId;
-      }
-
-      // 4. Update PrepUnit
-      await tx.prepUnit.update({
-        where: { id: prepUnitId },
-        data: updateData,
-      });
-
-      // 5. Update Order timestamps
-      if (!order.kitchenStartedAt) {
-        await tx.order.update({
-          where: { id: order.id },
-          data: { kitchenStartedAt: now },
+  async completePrepUnit(
+    prepUnitId: string,
+    staffUserId: string,
+  ): Promise<KitchenTransitionResult> {
+    const { orderId, becameReady } = await this.prisma.$transaction(
+      async (tx) => {
+        const unit = await this.lockPrepUnitOrder(tx, prepUnitId);
+        if (unit.doneAt)
+          throw new ConflictException('PrepUnit is already done.');
+        const now = new Date();
+        // Finishing an unstarted unit records both the start and the completion.
+        const { count } = await tx.prepUnit.updateMany({
+          where: { id: prepUnitId, doneAt: null },
+          data: {
+            doneAt: now,
+            doneByStaffUserId: staffUserId,
+            ...(unit.startedAt
+              ? {}
+              : { startedAt: now, startedByStaffUserId: staffUserId }),
+          },
         });
-      }
-
-      const unfinishedCount = await tx.prepUnit.count({
-        where: { orderId: order.id, doneAt: null },
-      });
-
-      if (unfinishedCount === 0 && !order.kitchenReadyAt) {
-        await tx.order.update({
-          where: { id: order.id },
-          data: { kitchenReadyAt: now },
-        });
-        isKitchenReady = true;
-      }
-
-      return { success: true };
-    });
-
-    if (isKitchenReady) {
-      // Intentionally executed after the Kitchen transaction commits
-      // to avoid nested locks or long-held DB locks
-      await this.deliveryGrouping.ensureReadyDropForOrder(orderIdForGrouping).catch(err => {
-        // Grouping might fail due to concurrency, but reconcile endpoint can recover
-        console.error('Failed to group order after kitchen ready:', err);
-      });
-    }
-
-    return res;
+        if (count !== 1)
+          throw new ConflictException('PrepUnit changed concurrently.');
+        await this.markKitchenStarted(tx, unit.orderId, staffUserId, now);
+        return {
+          orderId: unit.orderId,
+          becameReady: await this.markKitchenReadyIfComplete(
+            tx,
+            unit.orderId,
+            staffUserId,
+            now,
+          ),
+        };
+      },
+    );
+    return this.handOff(orderId, becameReady);
   }
 
-  async forceCompleteOrder(orderId: string, staffUserId: string) {
-    let isKitchenReady = false;
-
-    const res = await this.prisma.$transaction(async (tx) => {
-      // 1. Lock the Order
-      const resLock = await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${orderId}::uuid FOR UPDATE`;
-      if (resLock === 0) throw new NotFoundException('Order not found');
-
-      // 2. Validate Order
-      const order = await tx.order.findUnique({ where: { id: orderId } });
-      if (order?.status !== OrderStatus.CONFIRMED) {
-        throw new ConflictException('Order is not CONFIRMED');
-      }
-
+  async forceCompleteOrder(
+    orderId: string,
+    staffUserId: string,
+  ): Promise<KitchenTransitionResult> {
+    const becameReady = await this.prisma.$transaction(async (tx) => {
+      await this.lockConfirmedOrder(tx, orderId);
       const now = new Date();
-
-      // 3. Update NOT_STARTED units
       await tx.prepUnit.updateMany({
         where: { orderId, startedAt: null, doneAt: null },
         data: {
@@ -149,47 +127,130 @@ export class KitchenLifecycleService {
           doneByStaffUserId: staffUserId,
         },
       });
-
-      // 4. Update STARTED units
       await tx.prepUnit.updateMany({
         where: { orderId, startedAt: { not: null }, doneAt: null },
+        data: { doneAt: now, doneByStaffUserId: staffUserId },
+      });
+      await this.markKitchenStarted(tx, orderId, staffUserId, now);
+      return this.markKitchenReadyIfComplete(tx, orderId, staffUserId, now);
+    });
+    return this.handOff(orderId, becameReady);
+  }
+
+  private async lockPrepUnitOrder(tx: PrismaDb, prepUnitId: string) {
+    const unit = await tx.prepUnit.findUnique({
+      where: { id: prepUnitId },
+      select: { orderId: true },
+    });
+    if (!unit) throw new NotFoundException('PrepUnit not found.');
+    await this.lockConfirmedOrder(tx, unit.orderId);
+    // Re-read the unit under the parent lock.
+    return tx.prepUnit.findUniqueOrThrow({ where: { id: prepUnitId } });
+  }
+
+  private async lockConfirmedOrder(tx: PrismaDb, orderId: string) {
+    const rows = await tx.$queryRaw<
+      Array<{ status: OrderStatus }>
+    >`SELECT status FROM "Order" WHERE id = ${orderId}::uuid FOR UPDATE`;
+    if (rows.length === 0) throw new NotFoundException('Order not found.');
+    if (rows[0]!.status !== OrderStatus.CONFIRMED)
+      throw new ConflictException(
+        `Kitchen work is not active for an order in status ${rows[0]!.status}.`,
+      );
+  }
+
+  /** Sets Order.kitchenStartedAt and writes KITCHEN_STARTED exactly once. */
+  private async markKitchenStarted(
+    tx: PrismaDb,
+    orderId: string,
+    staffUserId: string,
+    now: Date,
+  ) {
+    const { count } = await tx.order.updateMany({
+      where: { id: orderId, kitchenStartedAt: null },
+      data: { kitchenStartedAt: now },
+    });
+    if (count === 1) {
+      await tx.orderEvent.create({
         data: {
-          doneAt: now,
-          doneByStaffUserId: staffUserId,
+          orderId,
+          type: OrderEventType.KITCHEN_STARTED,
+          actorStaffUserId: staffUserId,
+          occurredAt: now,
+          message: 'Kitchen work started',
         },
       });
+    }
+  }
 
-      // 5. Aggregate timestamps
-      if (!order.kitchenStartedAt) {
-        await tx.order.update({
-          where: { id: orderId },
-          data: { kitchenStartedAt: now },
-        });
-      }
-
-      if (!order.kitchenReadyAt) {
-        // Technically everything is done now, but let's double check to be perfectly safe
-        const unfinishedCount = await tx.prepUnit.count({
-          where: { orderId, doneAt: null },
-        });
-        if (unfinishedCount === 0) {
-          await tx.order.update({
-            where: { id: orderId },
-            data: { kitchenReadyAt: now },
-          });
-          isKitchenReady = true;
-        }
-      }
-
-      return { success: true };
+  /** With the Order locked: when every PrepUnit is done, sets kitchenReadyAt and writes KITCHEN_READY exactly once. */
+  private async markKitchenReadyIfComplete(
+    tx: PrismaDb,
+    orderId: string,
+    staffUserId: string,
+    now: Date,
+  ): Promise<boolean> {
+    if ((await tx.prepUnit.count({ where: { orderId, doneAt: null } })) > 0)
+      return false;
+    const { count } = await tx.order.updateMany({
+      where: { id: orderId, kitchenReadyAt: null },
+      data: { kitchenReadyAt: now },
     });
-
-    if (isKitchenReady) {
-      await this.deliveryGrouping.ensureReadyDropForOrder(orderId).catch(err => {
-        console.error('Failed to group order after force complete:', err);
+    if (count === 1) {
+      await tx.orderEvent.create({
+        data: {
+          orderId,
+          type: OrderEventType.KITCHEN_READY,
+          actorStaffUserId: staffUserId,
+          occurredAt: now,
+          message: 'Kitchen work complete',
+        },
       });
     }
+    return count === 1;
+  }
 
-    return res;
+  /** Post-commit grouping; failures are logged structurally and returned, never silently swallowed. */
+  private async handOff(
+    orderId: string,
+    kitchenReady: boolean,
+  ): Promise<KitchenTransitionResult> {
+    if (!kitchenReady)
+      return {
+        success: true,
+        orderId,
+        kitchenReady,
+        dispatch: { status: 'NOT_READY' },
+      };
+    try {
+      const { dropId } =
+        await this.deliveryGrouping.ensureReadyDropForOrder(orderId);
+      return {
+        success: true,
+        orderId,
+        kitchenReady,
+        dispatch: { status: 'GROUPED', dropId },
+      };
+    } catch (error) {
+      this.logger.error(
+        JSON.stringify({
+          event: 'kitchen_dispatch_grouping_failed',
+          orderId,
+          error: error instanceof Error ? error.message : String(error),
+        }),
+        error instanceof Error ? error.stack : undefined,
+      );
+      return {
+        success: true,
+        orderId,
+        kitchenReady,
+        dispatch: {
+          status: 'FAILED',
+          message:
+            'Kitchen work is saved, but the order could not be grouped for dispatch yet.',
+          recovery: 'POST /dispatch/drops/reconcile',
+        },
+      };
+    }
   }
 }

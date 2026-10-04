@@ -1,354 +1,275 @@
-import { Injectable, InternalServerErrorException, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
-import { PrismaService } from '../../prisma/prisma.service.js';
-import { PriceResolverService } from '../../pricing/price-resolver.service.js';
-import { OrderValidationService } from './order-validation.service.js';
-import { CreateOrderDto, UpdateOrderDto, OrderLineDto } from '../dto/order.dto.js';
-import { OrderStatus, OrderEventType } from '../../generated/prisma/enums.js';
+import {
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { randomBytes } from 'crypto';
+import { BusinessTimeService } from '../../business-time/business-time.service.js';
+import {
+  dbDateFromIsoDate,
+  isoDateFromDbDate,
+} from '../../business-time/business-time.utils.js';
+import type { Prisma } from '../../generated/prisma/client.js';
+import { OrderEventType, OrderStatus } from '../../generated/prisma/enums.js';
+import { OrderabilityService } from '../../menu/orderability.service.js';
+import type { PrismaDb } from '../../pricing/price-resolver.service.js';
+import { PrismaService } from '../../prisma/prisma.service.js';
+import type {
+  CreateOrderDto,
+  OrderLineDto,
+  UpdateOrderDto,
+} from '../dto/order.dto.js';
+import { buildOrderGraph, validateOrderLines } from './order-graph.js';
+import { OrderValidationService } from './order-validation.service.js';
 
+const EDITABLE_STATUSES: readonly OrderStatus[] = [
+  OrderStatus.DRAFT,
+  OrderStatus.PLACED,
+];
+
+const editableOrderInclude = {
+  lines: { include: { combinations: { include: { options: true } } } },
+  _count: { select: { prepUnits: true } },
+} as const satisfies Prisma.OrderInclude;
+
+type EditableOrder = Prisma.OrderGetPayload<{
+  include: typeof editableOrderInclude;
+}>;
+
+/**
+ * Orchestrates Order create / edit / place transactions.
+ * Orderability (menu/pricing) comes from OrderabilityService, delivery rules from
+ * OrderValidationService, snapshot assembly from order-graph, and time from
+ * BusinessTimeService.
+ */
 @Injectable()
 export class OrderCreationService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly validation: OrderValidationService,
-    private readonly priceResolver: PriceResolverService,
+    private readonly orderability: OrderabilityService,
+    private readonly businessTime: BusinessTimeService,
   ) {}
 
-  private generateOrderNumber(): string {
-    return `ORD-${new Date().getFullYear()}${(new Date().getMonth() + 1).toString().padStart(2, '0')}-${randomBytes(4).toString('hex').toUpperCase()}`;
+  /** ORD-<business YYYYMM>-<random>; uses the business date, not the server's local date. */
+  private generateOrderNumber(businessDate: string): string {
+    return `ORD-${businessDate.slice(0, 4)}${businessDate.slice(5, 7)}-${randomBytes(4).toString('hex').toUpperCase()}`;
   }
 
   async create(dto: CreateOrderDto, actorStaffUserId: string) {
-    // 1. Validate the structure
-    const { employee, company, address } = await this.validation.validateOrderGraph(
-      dto.employeeId,
-      dto.deliveryDate,
-      dto.lines,
-    );
-
-    // 2. Packaging & Times
-    const packaging = await this.prisma.packagingType.findUnique({ where: { id: company.defaultPackagingTypeId } });
-    if (!packaging) throw new InternalServerErrorException('Default packaging not found');
-
-    const deliveryTimeParts = company.defaultDeliveryTime; 
-    const deliveryAt = new Date(dto.deliveryDate);
-    deliveryAt.setUTCHours(deliveryTimeParts.getUTCHours(), deliveryTimeParts.getUTCMinutes(), 0, 0);
-
-    // 3. Resolve Pricing & Snapshots
-    const tierId = await this.priceResolver.resolveTierForEmployee(employee.id);
-    
-    // We need dish and option names for snapshots.
-    const dishIds = dto.lines.map(l => l.dishId);
-    const dishes = await this.prisma.dish.findMany({ where: { id: { in: dishIds } } });
-    const dishMap = new Map(dishes.map(d => [d.id, d]));
-
-    let totalCents = 0;
-    
-    // Process line items
-    const createLinesData: any[] = [];
-    for (const line of dto.lines) {
-      const dish = dishMap.get(line.dishId)!;
-      const resolvedDishPrice = await this.priceResolver.resolveDishPrice(tierId, dish.id);
-      if (resolvedDishPrice.priceCents === null) {
-        throw new BadRequestException(`Dish ${dish.id} is unavailable or unpriced for this employee.`);
-      }
-      const dishPriceCents = resolvedDishPrice.priceCents;
-
-      let lineTotalCents = 0;
-      let lineTotalQty = 0;
-      const createCombinationsData: any[] = [];
-
-      for (const combo of line.combinations) {
-        let comboUnitPriceCents = dishPriceCents;
-        lineTotalQty += combo.quantity;
-        
-        const createOptionsData = [];
-        
-        for (const opt of combo.options) {
-          const optionEntity = await this.prisma.option.findUnique({ where: { id: opt.optionId } });
-          const optionGroupEntity = await this.prisma.optionGroup.findUnique({ where: { id: opt.optionGroupId } });
-          let portionEntity = null;
-          let portionExtraCents = 0;
-
-          if (opt.portionSizeId) {
-            portionEntity = await this.prisma.portionSize.findUnique({ where: { id: opt.portionSizeId } });
-            const ogp = await this.prisma.optionGroupPortion.findUnique({
-              where: { optionGroupId_portionSizeId: { optionGroupId: opt.optionGroupId, portionSizeId: opt.portionSizeId } }
-            });
-            portionExtraCents = ogp?.extraChargeCents ?? 0;
-          }
-
-          const resolvedOptPrice = await this.priceResolver.resolveOptionPrice(tierId, opt.optionId);
-          if (resolvedOptPrice.priceCents === null) {
-            throw new BadRequestException(`Option ${opt.optionId} is unavailable or unpriced.`);
-          }
-          const optPriceCents = resolvedOptPrice.priceCents;
-
-          comboUnitPriceCents += optPriceCents + portionExtraCents;
-          
-          createOptionsData.push({
-            optionGroupId: opt.optionGroupId,
-            optionId: opt.optionId,
-            portionSizeId: opt.portionSizeId,
-            optionGroupNameSnapshot: optionGroupEntity!.name,
-            optionNameSnapshot: optionEntity!.name,
-            portionNameSnapshot: portionEntity?.name ?? null,
-            optionPriceCents: optPriceCents,
-            portionExtraCents,
-          });
-        }
-        
-        const comboTotalCents = comboUnitPriceCents * combo.quantity;
-        lineTotalCents += comboTotalCents;
-        
-        createCombinationsData.push({
-          quantity: combo.quantity,
-          unitPriceCents: comboUnitPriceCents,
-          totalCents: comboTotalCents,
-          options: {
-            create: createOptionsData,
-          }
-        });
-      }
-
-      totalCents += lineTotalCents;
-
-      createLinesData.push({
-        dishId: dish.id,
-        dishNameSnapshot: dish.name,
-        dishSkuSnapshot: dish.sku,
-        quantity: lineTotalQty,
-        dishUnitPriceCents: dishPriceCents,
-        lineTotalCents,
-        combinations: {
-          create: createCombinationsData,
-        }
-      });
+    if (!(await this.businessTime.isDeliveryDateOpen(dto.deliveryDate))) {
+      throw new ConflictException(
+        'Cutoff time for this delivery date has already passed.',
+      );
     }
+    const timezone = await this.businessTime.getTimezone();
+    const businessDate = await this.businessTime.getBusinessDate();
 
-    const initialStatus = dto.placeOrder ? OrderStatus.PLACED : OrderStatus.DRAFT;
+    return this.prisma.$transaction(async (tx) => {
+      const menu = await this.orderability.loadMenu(dto.employeeId, {
+        scope: 'ORDER',
+        dishIds: dto.lines.map((line) => line.dishId),
+        db: tx,
+      });
+      const delivery = await this.validation.resolveDelivery(tx, {
+        menu,
+        deliveryDate: dto.deliveryDate,
+        timezone,
+        request: {
+          deliveryAddressId: dto.deliveryAddressId,
+          deliveryTime: dto.deliveryTime,
+          packagingTypeId: dto.packagingTypeId,
+        },
+      });
+      const graph = buildOrderGraph(
+        validateOrderLines(dto.lines, menu.dishesById),
+      );
+      const now = new Date();
+      const events: Prisma.OrderEventUncheckedCreateWithoutOrderInput[] = [
+        {
+          type: OrderEventType.ORDER_CREATED,
+          actorStaffUserId,
+          occurredAt: now,
+          message: 'Order created',
+        },
+      ];
+      if (dto.placeOrder)
+        events.push({
+          type: OrderEventType.ORDER_PLACED,
+          actorStaffUserId,
+          occurredAt: now,
+          message: 'Order placed',
+        });
 
-    // 4. Create the Order
-    const order = await this.prisma.order.create({
-      data: {
-        orderNumber: this.generateOrderNumber(),
-        employeeId: employee.id,
-        companyId: company.id,
-        status: initialStatus,
-        deliveryDate: new Date(dto.deliveryDate),
-        deliveryAt,
-        deliveryAddressId: address.id,
-        deliveryAddressLabelSnapshot: address.label,
-        deliveryAddressLine1Snapshot: address.line1,
-        deliveryAddressLine2Snapshot: address.line2,
-        deliveryAddressCitySnapshot: address.city,
-        deliveryAddressRegionSnapshot: address.region,
-        deliveryAddressPostalCodeSnapshot: address.postalCode,
-        deliveryAddressCountrySnapshot: address.country,
-        packagingTypeId: packaging.id,
-        packagingNameSnapshot: packaging.name,
-        deliveryLeadMinutesSnapshot: company.deliveryLeadMinutes,
-        subtotalCents: totalCents,
-        totalCents,
-        billableTotalCents: null, // Frozen only on CONFIRMED
-        placedAt: dto.placeOrder ? new Date() : null,
+      const data: Prisma.OrderUncheckedCreateInput = {
+        orderNumber: this.generateOrderNumber(businessDate),
+        employeeId: menu.employee.id,
+        companyId: menu.employee.companyId,
+        status: dto.placeOrder ? OrderStatus.PLACED : OrderStatus.DRAFT,
+        deliveryDate: dbDateFromIsoDate(dto.deliveryDate),
+        deliveryAt: delivery.data.deliveryAt!,
+        deliveryAddressId: delivery.data.deliveryAddressId!,
+        deliveryAddressLabelSnapshot:
+          delivery.data.deliveryAddressLabelSnapshot!,
+        deliveryAddressLine1Snapshot:
+          delivery.data.deliveryAddressLine1Snapshot!,
+        deliveryAddressLine2Snapshot:
+          delivery.data.deliveryAddressLine2Snapshot ?? null,
+        deliveryAddressCitySnapshot: delivery.data.deliveryAddressCitySnapshot!,
+        deliveryAddressRegionSnapshot:
+          delivery.data.deliveryAddressRegionSnapshot ?? null,
+        deliveryAddressPostalCodeSnapshot:
+          delivery.data.deliveryAddressPostalCodeSnapshot ?? null,
+        deliveryAddressCountrySnapshot:
+          delivery.data.deliveryAddressCountrySnapshot!,
+        packagingTypeId: delivery.data.packagingTypeId!,
+        packagingNameSnapshot: delivery.data.packagingNameSnapshot!,
+        deliveryLeadMinutesSnapshot: delivery.deliveryLeadMinutes,
+        subtotalCents: graph.totalCents,
+        totalCents: graph.totalCents,
+        billableTotalCents: null, // frozen only at confirmation
+        placedAt: dto.placeOrder ? now : null,
         createdByStaffUserId: actorStaffUserId,
-        lines: {
-          create: createLinesData,
-        },
-        events: {
-          create: [
-            {
-              type: OrderEventType.ORDER_CREATED,
-              actorStaffUserId,
-              message: 'Order created',
-            },
-            ...(dto.placeOrder ? [{
-              type: OrderEventType.ORDER_PLACED,
-              actorStaffUserId,
-              message: 'Order placed directly on creation',
-            }] : []),
-          ],
-        },
-      },
+        lines: { create: graph.lines },
+        events: { create: events },
+      };
+      return tx.order.create({ data });
     });
-
-    return order;
   }
 
-  async update(orderId: string, dto: UpdateOrderDto, actorStaffUserId: string) {
-    const existingOrder = await this.prisma.order.findUnique({
-      where: { id: orderId },
-      include: {
-        lines: {
-          include: {
-            combinations: {
-              include: { options: true }
-            }
-          }
-        }
-      }
-    });
-
-    if (!existingOrder) throw new NotFoundException('Order not found');
-    if (existingOrder.status !== OrderStatus.DRAFT && existingOrder.status !== OrderStatus.PLACED) {
-      throw new ConflictException(`Cannot edit order in status ${existingOrder.status}`);
-    }
-
-    // Convert existing lines to DTO format if lines not provided
-    let linesDto: OrderLineDto[];
-    if (dto.lines) {
-      linesDto = dto.lines;
-    } else {
-      linesDto = existingOrder.lines.map(l => ({
-        dishId: l.dishId,
-        combinations: l.combinations.map(c => ({
-          quantity: c.quantity,
-          options: c.options.map(o => ({
-            optionGroupId: o.optionGroupId,
-            optionId: o.optionId,
-            portionSizeId: o.portionSizeId ?? undefined,
-          }))
-        }))
-      }));
-    }
-
-    const { employee, company, address } = await this.validation.validateOrderGraph(
-      existingOrder.employeeId,
-      existingOrder.deliveryDate.toISOString().split('T')[0]!,
-      linesDto,
+  /** PATCH /orders/:id — edit a DRAFT/PLACED Order; `placeOrder: true` also places a DRAFT. */
+  update(orderId: string, dto: UpdateOrderDto, actorStaffUserId: string) {
+    return this.mutateEditable(
+      orderId,
+      dto,
+      actorStaffUserId,
+      dto.placeOrder === true ? 'PLACE_IF_DRAFT' : 'EDIT',
     );
+  }
 
-    const packaging = await this.prisma.packagingType.findUnique({ where: { id: company.defaultPackagingTypeId } });
-    if (!packaging) throw new InternalServerErrorException('Default packaging not found');
+  /** POST /orders/:id/place — DRAFT → PLACED after revalidation and repricing. */
+  place(orderId: string, actorStaffUserId: string) {
+    return this.mutateEditable(orderId, {}, actorStaffUserId, 'PLACE');
+  }
 
-    const deliveryTimeParts = company.defaultDeliveryTime; 
-    const deliveryAt = existingOrder.deliveryDate;
-    deliveryAt.setUTCHours(deliveryTimeParts.getUTCHours(), deliveryTimeParts.getUTCMinutes(), 0, 0);
-
-    const tierId = await this.priceResolver.resolveTierForEmployee(employee.id);
-    
-    const dishIds = linesDto.map(l => l.dishId);
-    const dishes = await this.prisma.dish.findMany({ where: { id: { in: dishIds } } });
-    const dishMap = new Map(dishes.map(d => [d.id, d]));
-
-    let totalCents = 0;
-    
-    const createLinesData: any[] = [];
-    for (const line of linesDto) {
-      const dish = dishMap.get(line.dishId)!;
-      const resolvedDishPrice = await this.priceResolver.resolveDishPrice(tierId, dish.id);
-      if (resolvedDishPrice.priceCents === null) {
-        throw new BadRequestException(`Dish ${dish.id} is unavailable or unpriced for this employee.`);
-      }
-      const dishPriceCents = resolvedDishPrice.priceCents;
-
-      let lineTotalCents = 0;
-      let lineTotalQty = 0;
-      const createCombinationsData: any[] = [];
-
-      for (const combo of line.combinations) {
-        let comboUnitPriceCents = dishPriceCents;
-        lineTotalQty += combo.quantity;
-        
-        const createOptionsData = [];
-        for (const opt of combo.options) {
-          const optionEntity = await this.prisma.option.findUnique({ where: { id: opt.optionId } });
-          const optionGroupEntity = await this.prisma.optionGroup.findUnique({ where: { id: opt.optionGroupId } });
-          let portionEntity = null;
-          let portionExtraCents = 0;
-
-          if (opt.portionSizeId) {
-            portionEntity = await this.prisma.portionSize.findUnique({ where: { id: opt.portionSizeId } });
-            const ogp = await this.prisma.optionGroupPortion.findUnique({
-              where: { optionGroupId_portionSizeId: { optionGroupId: opt.optionGroupId, portionSizeId: opt.portionSizeId } }
-            });
-            portionExtraCents = ogp?.extraChargeCents ?? 0;
-          }
-
-          const resolvedOptPrice = await this.priceResolver.resolveOptionPrice(tierId, opt.optionId);
-          if (resolvedOptPrice.priceCents === null) {
-            throw new BadRequestException(`Option ${opt.optionId} is unavailable or unpriced.`);
-          }
-          const optPriceCents = resolvedOptPrice.priceCents;
-
-          comboUnitPriceCents += optPriceCents + portionExtraCents;
-          
-          createOptionsData.push({
-            optionGroupId: opt.optionGroupId,
-            optionId: opt.optionId,
-            portionSizeId: opt.portionSizeId,
-            optionGroupNameSnapshot: optionGroupEntity!.name,
-            optionNameSnapshot: optionEntity!.name,
-            portionNameSnapshot: portionEntity?.name ?? null,
-            optionPriceCents: optPriceCents,
-            portionExtraCents,
-          });
-        }
-        
-        const comboTotalCents = comboUnitPriceCents * combo.quantity;
-        lineTotalCents += comboTotalCents;
-        
-        createCombinationsData.push({
-          quantity: combo.quantity,
-          unitPriceCents: comboUnitPriceCents,
-          totalCents: comboTotalCents,
-          options: { create: createOptionsData }
-        });
-      }
-
-      totalCents += lineTotalCents;
-
-      createLinesData.push({
-        dishId: dish.id,
-        dishNameSnapshot: dish.name,
-        dishSkuSnapshot: dish.sku,
-        quantity: lineTotalQty,
-        dishUnitPriceCents: dishPriceCents,
-        lineTotalCents,
-        combinations: { create: createCombinationsData }
-      });
-    }
-
-    const placeNow = dto.placeOrder === true || (dto.placeOrder !== false && existingOrder.status === OrderStatus.PLACED);
-    const newStatus = placeNow ? OrderStatus.PLACED : OrderStatus.DRAFT;
-    const wasDraft = existingOrder.status === OrderStatus.DRAFT;
-    
-    const events: any[] = [{ type: OrderEventType.ORDER_CREATED, actorStaffUserId, message: 'Order edited' }];
-    if (placeNow && wasDraft) {
-      events.push({ type: OrderEventType.ORDER_PLACED, actorStaffUserId, message: 'Order placed' });
-    }
-
-    // Delete existing graph and replace with new
+  /**
+   * One transaction, serialized with cutoff on the Order row lock:
+   * lock → reload → status/cutoff/PrepUnit checks → authoritative revalidation and
+   * repricing → FK-safe child-first replacement → snapshots/totals/status/event.
+   */
+  private mutateEditable(
+    orderId: string,
+    dto: UpdateOrderDto,
+    actorStaffUserId: string,
+    mode: 'EDIT' | 'PLACE' | 'PLACE_IF_DRAFT',
+  ) {
     return this.prisma.$transaction(async (tx) => {
+      await this.lockOrder(tx, orderId);
+      const order = await tx.order.findUniqueOrThrow({
+        where: { id: orderId },
+        include: editableOrderInclude,
+      });
+
+      if (!EDITABLE_STATUSES.includes(order.status))
+        throw new ConflictException(
+          `Cannot edit order in status ${order.status}.`,
+        );
+      if (mode === 'PLACE' && order.status !== OrderStatus.DRAFT)
+        throw new ConflictException(
+          `Cannot place order in status ${order.status}.`,
+        );
+
+      const deliveryDate = isoDateFromDbDate(order.deliveryDate);
+      if (!(await this.businessTime.isDeliveryDateOpen(deliveryDate)))
+        throw new ConflictException(
+          'Cutoff has passed for this delivery date.',
+        );
+      if (order._count.prepUnits > 0)
+        throw new ConflictException(
+          'Order already has Kitchen work and cannot be edited.',
+        );
+
+      const lines = dto.lines ?? this.existingLines(order);
+      const menu = await this.orderability.loadMenu(order.employeeId, {
+        scope: 'ORDER',
+        dishIds: lines.map((line) => line.dishId),
+        db: tx,
+      });
+      if (menu.employee.companyId !== order.companyId) {
+        throw new ConflictException(
+          'Employee has moved to another company; this order can no longer be edited.',
+        );
+      }
+      const delivery = await this.validation.resolveDelivery(tx, {
+        menu,
+        deliveryDate,
+        timezone: await this.businessTime.getTimezone(),
+        request: {
+          deliveryAddressId: dto.deliveryAddressId,
+          deliveryTime: dto.deliveryTime,
+          packagingTypeId: dto.packagingTypeId,
+        },
+        existing: {
+          deliveryAddressId: order.deliveryAddressId,
+          deliveryAt: order.deliveryAt,
+          packagingTypeId: order.packagingTypeId,
+        },
+      });
+      const graph = buildOrderGraph(validateOrderLines(lines, menu.dishesById));
+
+      // FK-safe replacement: Restrict relations require children first.
+      await tx.orderCombinationOption.deleteMany({
+        where: { combination: { orderLine: { orderId } } },
+      });
+      await tx.orderCombination.deleteMany({
+        where: { orderLine: { orderId } },
+      });
       await tx.orderLine.deleteMany({ where: { orderId } });
 
-      const order = await tx.order.update({
-        where: { id: orderId },
-        data: {
-          status: newStatus,
-          deliveryAt,
-          deliveryAddressId: address.id,
-          deliveryAddressLabelSnapshot: address.label,
-          deliveryAddressLine1Snapshot: address.line1,
-          deliveryAddressLine2Snapshot: address.line2,
-          deliveryAddressCitySnapshot: address.city,
-          deliveryAddressRegionSnapshot: address.region,
-          deliveryAddressPostalCodeSnapshot: address.postalCode,
-          deliveryAddressCountrySnapshot: address.country,
-          packagingTypeId: packaging.id,
-          packagingNameSnapshot: packaging.name,
-          deliveryLeadMinutesSnapshot: company.deliveryLeadMinutes,
-          subtotalCents: totalCents,
-          totalCents,
-          placedAt: (placeNow && wasDraft) ? new Date() : existingOrder.placedAt,
-          lines: { create: createLinesData },
-          events: { create: events },
-        },
-      });
-
-      return order;
+      // A PLACED Order is never reverted to DRAFT by an edit.
+      const placing = order.status === OrderStatus.DRAFT && mode !== 'EDIT';
+      const now = new Date();
+      const data: Prisma.OrderUncheckedUpdateInput = {
+        ...delivery.data,
+        subtotalCents: graph.totalCents,
+        totalCents: graph.totalCents,
+        lines: { create: graph.lines },
+        ...(placing && {
+          status: OrderStatus.PLACED,
+          placedAt: now,
+          events: {
+            create: {
+              type: OrderEventType.ORDER_PLACED,
+              actorStaffUserId,
+              occurredAt: now,
+              message: 'Order placed',
+            },
+          },
+        }),
+      };
+      return tx.order.update({ where: { id: orderId }, data });
     });
   }
-}
 
+  private async lockOrder(tx: PrismaDb, orderId: string) {
+    const rows = await tx.$queryRaw<
+      Array<{ id: string }>
+    >`SELECT id FROM "Order" WHERE id = ${orderId}::uuid FOR UPDATE`;
+    if (rows.length === 0) throw new NotFoundException('Order not found.');
+  }
+
+  private existingLines(order: EditableOrder): OrderLineDto[] {
+    return order.lines.map((line) => ({
+      dishId: line.dishId,
+      quantity: line.quantity,
+      combinations: line.combinations.map((combination) => ({
+        quantity: combination.quantity,
+        options: combination.options.map((option) => ({
+          optionGroupId: option.optionGroupId,
+          optionId: option.optionId,
+          portionSizeId: option.portionSizeId ?? undefined,
+        })),
+      })),
+    }));
+  }
+}

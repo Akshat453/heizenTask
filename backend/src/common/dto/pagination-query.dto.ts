@@ -1,5 +1,12 @@
 import { Type } from 'class-transformer';
-import { IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
+import {
+  IsInt,
+  IsOptional,
+  IsString,
+  Max,
+  MaxLength,
+  Min,
+} from 'class-validator';
 
 export class PaginationQueryDto {
   @IsOptional()
@@ -46,4 +53,12 @@ export function paginate<T>(
       totalPages: Math.ceil(totalItems / pageSize),
     },
   };
+}
+
+/** Prisma skip/take for a validated page request. */
+export function pageArgs(query: { page: number; pageSize: number }): {
+  skip: number;
+  take: number;
+} {
+  return { skip: (query.page - 1) * query.pageSize, take: query.pageSize };
 }

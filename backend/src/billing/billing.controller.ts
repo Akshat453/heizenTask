@@ -1,4 +1,6 @@
-import { Controller, Get, Post, Body, Param, Query, UseGuards, ParseUUIDPipe } from '@nestjs/common';
+import { Controller, Get, Post, Body, Query } from '@nestjs/common';
+import { PaginationQueryDto } from '../common/dto/pagination-query.dto.js';
+import { IdParam } from '../common/decorators/id-param.decorator.js';
 import { RequirePermissions } from '../common/decorators/require-permissions.decorator.js';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 import { BillingQueryService } from './services/billing-query.service.js';
@@ -17,8 +19,11 @@ export class BillingController {
 
   @Get('companies/:id/billing/uninvoiced')
   @RequirePermissions('billing.read')
-  getUninvoicedOrders(@Param('id', ParseUUIDPipe) companyId: string) {
-    return this.queryService.getUninvoicedOrders(companyId);
+  getUninvoicedOrders(
+    @IdParam() companyId: string,
+    @Query() query: PaginationQueryDto,
+  ) {
+    return this.queryService.getUninvoicedOrders(companyId, query);
   }
 
   @Get('invoices')
@@ -29,25 +34,19 @@ export class BillingController {
 
   @Get('invoices/:id')
   @RequirePermissions('billing.read')
-  getInvoiceDetail(@Param('id', ParseUUIDPipe) invoiceId: string) {
+  getInvoiceDetail(@IdParam() invoiceId: string) {
     return this.queryService.getInvoiceDetail(invoiceId);
   }
 
   @Post('invoices')
   @RequirePermissions('billing.manage')
-  createInvoice(
-    @Body() dto: CreateInvoiceDto,
-    @CurrentUser() user: StaffUser,
-  ) {
+  createInvoice(@Body() dto: CreateInvoiceDto, @CurrentUser() user: StaffUser) {
     return this.creationService.createInvoice(dto, user.id);
   }
 
   @Post('invoices/:id/pay')
   @RequirePermissions('billing.manage')
-  markPaid(
-    @Param('id', ParseUUIDPipe) invoiceId: string,
-    @CurrentUser() user: StaffUser,
-  ) {
+  markPaid(@IdParam() invoiceId: string, @CurrentUser() user: StaffUser) {
     return this.lifecycleService.markPaid(invoiceId, user.id);
   }
 }

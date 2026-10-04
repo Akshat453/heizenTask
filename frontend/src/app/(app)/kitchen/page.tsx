@@ -1,5 +1,6 @@
 "use client";
 
+import { format } from "date-fns";
 import { useEffect, useState } from "react";
 import { apiRequest } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
@@ -39,9 +40,10 @@ interface KitchenBoardItem {
 }
 
 export default function KitchenBoardPage() {
-  const { user, can } = useAuth();
+  const { can } = useAuth();
   
-  const [date, setDate] = useState<string>(new Date().toISOString().split("T")[0]);
+  // Local calendar date (not the UTC date from toISOString); the API applies the business timezone.
+  const [date, setDate] = useState<string>(format(new Date(), "yyyy-MM-dd"));
   const [stationId, setStationId] = useState<string>("all");
   const [items, setItems] = useState<KitchenBoardItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);

@@ -14,7 +14,12 @@ describe('DeliveryGroupingService', () => {
           provide: PrismaService,
           useValue: {
             $transaction: vi.fn(),
-            order: { findUnique: vi.fn(), findMany: vi.fn(), updateMany: vi.fn(), count: vi.fn() },
+            order: {
+              findUnique: vi.fn(),
+              findMany: vi.fn(),
+              updateMany: vi.fn(),
+              count: vi.fn(),
+            },
             deliveryDrop: { create: vi.fn(), delete: vi.fn() },
             company: { findUnique: vi.fn() },
             staffUser: { findUnique: vi.fn() },
@@ -38,7 +43,9 @@ describe('DeliveryGroupingService', () => {
         deliveryAddressId: 'A1',
         deliveryAt: new Date('2026-10-03T10:00:00.000Z'),
       };
-      expect(service.getCanonicalKey(order)).toBe('C1|A1|2026-10-03T10:00:00.000Z');
+      expect(service.getCanonicalKey(order)).toBe(
+        'C1|A1|2026-10-03T10:00:00.000Z',
+      );
     });
 
     it('should fallback to normalized snapshot text if deliveryAddressId is absent', () => {
@@ -51,7 +58,9 @@ describe('DeliveryGroupingService', () => {
         deliveryAddressCountrySnapshot: '  USA',
         deliveryAt: new Date('2026-10-03T10:00:00.000Z'),
       };
-      expect(service.getCanonicalKey(order)).toBe('C1|123 main st|anytown||usa|2026-10-03T10:00:00.000Z');
+      expect(service.getCanonicalKey(order)).toBe(
+        'C1|123 main st|anytown||usa|2026-10-03T10:00:00.000Z',
+      );
     });
   });
 });

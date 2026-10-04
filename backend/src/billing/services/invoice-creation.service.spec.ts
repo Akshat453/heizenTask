@@ -56,7 +56,9 @@ describe('InvoiceCreationService', () => {
         },
       };
 
-      (prisma.$transaction as any).mockImplementation(async (cb) => cb(txMock));
+      (prisma.$transaction as any).mockImplementation(
+        async (cb: (tx: unknown) => unknown) => cb(txMock),
+      );
 
       const result = await service.createInvoice(
         { companyId: 'company-1', orderIds: ['order-1'] },
@@ -95,10 +97,15 @@ describe('InvoiceCreationService', () => {
         },
       };
 
-      (prisma.$transaction as any).mockImplementation(async (cb) => cb(txMock));
+      (prisma.$transaction as any).mockImplementation(
+        async (cb: (tx: unknown) => unknown) => cb(txMock),
+      );
 
       await expect(
-        service.createInvoice({ companyId: 'company-1', orderIds: ['order-1'] }, 'user-1'),
+        service.createInvoice(
+          { companyId: 'company-1', orderIds: ['order-1'] },
+          'user-1',
+        ),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -117,23 +124,34 @@ describe('InvoiceCreationService', () => {
         },
       };
 
-      (prisma.$transaction as any).mockImplementation(async (cb) => cb(txMock));
+      (prisma.$transaction as any).mockImplementation(
+        async (cb: (tx: unknown) => unknown) => cb(txMock),
+      );
 
       await expect(
-        service.createInvoice({ companyId: 'company-1', orderIds: ['order-1'] }, 'user-1'),
+        service.createInvoice(
+          { companyId: 'company-1', orderIds: ['order-1'] },
+          'user-1',
+        ),
       ).rejects.toThrow(BadRequestException);
     });
 
     it('should translate Prisma unique constraint to ConflictException', async () => {
-      const error = new Prisma.PrismaClientKnownRequestError('Unique constraint', {
-        code: 'P2002',
-        clientVersion: '7',
-      });
+      const error = new Prisma.PrismaClientKnownRequestError(
+        'Unique constraint',
+        {
+          code: 'P2002',
+          clientVersion: '7',
+        },
+      );
 
       (prisma.$transaction as any).mockRejectedValue(error);
 
       await expect(
-        service.createInvoice({ companyId: 'company-1', orderIds: ['order-1'] }, 'user-1'),
+        service.createInvoice(
+          { companyId: 'company-1', orderIds: ['order-1'] },
+          'user-1',
+        ),
       ).rejects.toThrow(ConflictException);
     });
   });

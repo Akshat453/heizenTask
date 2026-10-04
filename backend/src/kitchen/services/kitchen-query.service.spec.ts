@@ -39,7 +39,7 @@ describe('KitchenQueryService', () => {
       settings: {
         atRiskWindowMinutes: 30,
         kitchenReadyBufferMinutes: 60,
-      }
+      },
     };
 
     const baseUnit = {
@@ -61,13 +61,19 @@ describe('KitchenQueryService', () => {
       },
       combination: {
         orderLine: { dishNameSnapshot: 'Dish A' },
-        options: [{ optionGroupNameSnapshot: 'Opt', optionNameSnapshot: 'Val', portionNameSnapshot: null }]
-      }
+        options: [
+          {
+            optionGroupNameSnapshot: 'Opt',
+            optionNameSnapshot: 'Val',
+            portionNameSnapshot: null,
+          },
+        ],
+      },
     };
 
     it('filters prep units properly and derives statuses', async () => {
       settingsService.getSettings.mockResolvedValue(baseSettings);
-      
+
       // We will manipulate `now` via vi.useFakeTimers or just simple time math
       const now = new Date();
       // plannedKitchenReadyAt will be 60 mins before deliveryAt.
@@ -77,7 +83,13 @@ describe('KitchenQueryService', () => {
       // Since now is 60m before deadline, it should be ON_TRACK.
 
       prisma.prepUnit.findMany.mockResolvedValue([
-        { ...baseUnit, order: { ...baseUnit.order, deliveryAt: new Date(now.getTime() + 1000 * 60 * 160) } }
+        {
+          ...baseUnit,
+          order: {
+            ...baseUnit.order,
+            deliveryAt: new Date(now.getTime() + 1000 * 60 * 160),
+          },
+        },
       ]);
 
       const items = await service.getKitchenBoard('2025-01-06');
@@ -85,10 +97,10 @@ describe('KitchenQueryService', () => {
         where: {
           order: {
             deliveryDate: expect.any(Date),
-            status: OrderStatus.CONFIRMED
-          }
+            status: OrderStatus.CONFIRMED,
+          },
         },
-        include: expect.anything()
+        include: expect.anything(),
       });
 
       expect(items.length).toBe(1);
@@ -99,18 +111,26 @@ describe('KitchenQueryService', () => {
     it('identifies AT_RISK and LATE timing states', async () => {
       settingsService.getSettings.mockResolvedValue(baseSettings);
       const now = new Date();
-      
+
       const atRiskDelivery = new Date(now.getTime() + 1000 * 60 * 135); // planned = now + 15m. (within 30m risk window)
       const lateDelivery = new Date(now.getTime() + 1000 * 60 * 30); // planned = now - 90m. (late)
 
       prisma.prepUnit.findMany.mockResolvedValue([
-        { ...baseUnit, id: 'unit-at-risk', order: { ...baseUnit.order, deliveryAt: atRiskDelivery } },
-        { ...baseUnit, id: 'unit-late', order: { ...baseUnit.order, deliveryAt: lateDelivery } }
+        {
+          ...baseUnit,
+          id: 'unit-at-risk',
+          order: { ...baseUnit.order, deliveryAt: atRiskDelivery },
+        },
+        {
+          ...baseUnit,
+          id: 'unit-late',
+          order: { ...baseUnit.order, deliveryAt: lateDelivery },
+        },
       ]);
 
       const items = await service.getKitchenBoard('2025-01-06');
-      const atRisk = items.find(i => i.id === 'unit-at-risk');
-      const late = items.find(i => i.id === 'unit-late');
+      const atRisk = items.find((i) => i.id === 'unit-at-risk');
+      const late = items.find((i) => i.id === 'unit-late');
 
       expect(atRisk?.timingState).toBe('AT_RISK');
       expect(late?.timingState).toBe('LATE');
@@ -118,15 +138,15 @@ describe('KitchenQueryService', () => {
 
     it('identifies STARTED and DONE prep states', async () => {
       settingsService.getSettings.mockResolvedValue(baseSettings);
-      
+
       prisma.prepUnit.findMany.mockResolvedValue([
         { ...baseUnit, id: 'u1', startedAt: new Date() },
-        { ...baseUnit, id: 'u2', startedAt: new Date(), doneAt: new Date() }
+        { ...baseUnit, id: 'u2', startedAt: new Date(), doneAt: new Date() },
       ]);
 
       const items = await service.getKitchenBoard('2025-01-06');
-      const u1 = items.find(i => i.id === 'u1');
-      const u2 = items.find(i => i.id === 'u2');
+      const u1 = items.find((i) => i.id === 'u1');
+      const u2 = items.find((i) => i.id === 'u2');
 
       expect(u1?.prepState).toBe('STARTED');
       expect(u2?.prepState).toBe('DONE');

@@ -1,8 +1,47 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service.js';
-import { DeliveryDropStatus, OrderStatus, OrderEventType } from '../../generated/prisma/enums.js';
+import {
+  DeliveryDropStatus,
+  OrderStatus,
+  OrderEventType,
+} from '../../generated/prisma/enums.js';
 import { Prisma } from '../../generated/prisma/client.js';
 
+export const DRIVER_DELIVER_PERMISSION = 'driver.own_drops.deliver';
+
+/** Fields that define an Order's grouping key and a Drop's address snapshot. */
+export const groupingOrderSelect = {
+  companyId: true,
+  deliveryAddressId: true,
+  deliveryAddressLabelSnapshot: true,
+  deliveryAddressLine1Snapshot: true,
+  deliveryAddressLine2Snapshot: true,
+  deliveryAddressCitySnapshot: true,
+  deliveryAddressRegionSnapshot: true,
+  deliveryAddressPostalCodeSnapshot: true,
+  deliveryAddressCountrySnapshot: true,
+  deliveryAt: true,
+  deliveryDropId: true,
+} as const satisfies Prisma.OrderSelect;
+export type GroupingOrder = Prisma.OrderGetPayload<{
+  select: typeof groupingOrderSelect;
+}>;
+
+/**
+ * LOCK ORDERING — every transaction that touches Drop grouping must acquire locks
+ * in this order and never take an earlier level while holding a later one:
+ *
+ *   1. Delivery-grouping advisory locks, pg_advisory_xact_lock(hashtextextended(key)),
+ *      one per canonical grouping key, in ascending key order (lockGroupingKeys).
+ *   2. DeliveryDrop row locks (FOR UPDATE).
+ *   3. Order row locks (FOR UPDATE; ascending id when several).
+ *
+ * Order membership (Order.deliveryDropId) only changes while the advisory lock of
+ * the Order's grouping key is held, so a Drop id read after step 1 is stable.
+ * Transactions that never regroup (edit, cutoff, kitchen, billing) take only
+ * Order row locks; dispatch/driver transitions take the Drop row before inserting
+ * Order events (which take FK key-share locks on Order rows).
+ */
 @Injectable()
 export class DeliveryGroupingService {
   private readonly logger = new Logger(DeliveryGroupingService.name);
@@ -22,15 +61,16 @@ export class DeliveryGroupingService {
     deliveryAt: Date;
   }): string {
     const timeStr = order.deliveryAt.toISOString();
-    
+
     // Prefer stable ID if present
     if (order.deliveryAddressId) {
       return `${order.companyId}|${order.deliveryAddressId}|${timeStr}`;
     }
 
     // Otherwise use normalized snapshot
-    const normalize = (s: string | null | undefined) => (s ? s.trim().toLowerCase().replace(/\s+/g, ' ') : '');
-    
+    const normalize = (s: string | null | undefined) =>
+      s ? s.trim().toLowerCase().replace(/\s+/g, ' ') : '';
+
     const addr = [
       normalize(order.deliveryAddressLine1Snapshot),
       normalize(order.deliveryAddressCitySnapshot),
@@ -41,226 +81,252 @@ export class DeliveryGroupingService {
     return `${order.companyId}|${addr}|${timeStr}`;
   }
 
-  /**
-   * Attempts to group an Order into a DeliveryDrop.
-   * Can be called independently, or as part of a larger transaction (e.g. overrideDelivery).
-   */
-  async ensureReadyDropForOrder(orderId: string, providedTx?: Prisma.TransactionClient) {
-    const execute = async (tx: Prisma.TransactionClient) => {
-      const order = await tx.order.findUnique({
-        where: { id: orderId },
-        select: {
-          companyId: true,
-          deliveryAddressId: true,
-          deliveryAddressLine1Snapshot: true,
-          deliveryAddressCitySnapshot: true,
-          deliveryAddressPostalCodeSnapshot: true,
-          deliveryAddressCountrySnapshot: true,
-          deliveryAt: true,
-          deliveryAddressLabelSnapshot: true,
-          deliveryAddressLine2Snapshot: true,
-          deliveryAddressRegionSnapshot: true,
-        },
-      });
-
-      if (!order) return;
-
-      const canonicalKey = this.getCanonicalKey(order);
-      await this.reconcileGroup(canonicalKey, tx, order);
-    };
-
-    if (providedTx) {
-      await execute(providedTx);
-    } else {
-      await this.prisma.$transaction(execute);
+  /** Acquires grouping advisory locks for `keys` in deterministic (sorted, de-duplicated) order. */
+  async lockGroupingKeys(
+    tx: Prisma.TransactionClient,
+    keys: readonly string[],
+  ): Promise<void> {
+    for (const key of [...new Set(keys)].sort()) {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`;
     }
   }
 
+  /** Deletes a mutable DISPATCH_READY Drop that no longer has any Orders. Immutable Drops are never deleted. */
+  async deleteDropIfEmpty(
+    tx: Prisma.TransactionClient,
+    dropId: string,
+  ): Promise<boolean> {
+    const { count } = await tx.deliveryDrop.deleteMany({
+      where: {
+        id: dropId,
+        status: DeliveryDropStatus.DISPATCH_READY,
+        orders: { none: {} },
+      },
+    });
+    return count > 0;
+  }
+
   /**
-   * Reconciles a specific grouping key.
-   * Locks the key, finds all CONFIRMED unattached/DISPATCH_READY orders,
-   * checks if they are all kitchen-ready, and creates/attaches to a Drop.
+   * Groups an Order's canonical key (no-op unless the whole group is Kitchen-ready).
+   * Runs in its own transaction unless `providedTx` is given. Returns the mutable
+   * Drop the group now uses, if any.
+   */
+  async ensureReadyDropForOrder(
+    orderId: string,
+    providedTx?: Prisma.TransactionClient,
+  ): Promise<{ dropId: string | null }> {
+    const execute = async (tx: Prisma.TransactionClient) => {
+      const order = await tx.order.findUnique({
+        where: { id: orderId },
+        select: groupingOrderSelect,
+      });
+      if (!order) return { dropId: null };
+      return this.reconcileGroup(this.getCanonicalKey(order), tx, order);
+    };
+    return providedTx ? execute(providedTx) : this.prisma.$transaction(execute);
+  }
+
+  /**
+   * Reconciles one grouping key (idempotent). Lock order: the key's advisory lock,
+   * then every mutable Drop the group references (FOR UPDATE, re-checked), then
+   * the Order rows via the attach update. Rules:
+   *   - only CONFIRMED Orders matching the exact key take part;
+   *   - Orders in OUT_FOR_DELIVERY/DELIVERED Drops are immutable and never moved;
+   *   - nothing is grouped until every remaining Order of the key is Kitchen-ready;
+   *   - then all of them share ONE mutable DISPATCH_READY Drop (reused, or created);
+   *     stray extra mutable Drops are consolidated and removed.
    */
   async reconcileGroup(
     canonicalKey: string,
     tx: Prisma.TransactionClient,
-    sampleOrder?: any, // Pass an order object to avoid re-querying for snapshot fields if we need to create a Drop
-  ) {
-    // 1. Acquire advisory lock on the hash of the canonical key
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${canonicalKey}, 0))`;
+    sample: GroupingOrder,
+  ): Promise<{ dropId: string | null }> {
+    await this.lockGroupingKeys(tx, [canonicalKey]);
 
-    // 2. We need to find all orders that logically belong to this canonical key.
-    // However, we don't store the canonical key in the DB.
-    // Since we know the companyId and deliveryAt from the key (or from sampleOrder if provided),
-    // we can query candidate orders and filter them in memory, or use the sampleOrder fields to query.
-    
-    let baseCompanyId = '';
-    let baseDeliveryAt: Date;
-    let baseAddressId: string | null = null;
-    let baseAddrLine1 = '';
-    let baseAddrCity = '';
-    let baseAddrPostal = '';
-    let baseAddrCountry = '';
+    const loadMatching = async () =>
+      (
+        await tx.order.findMany({
+          where: {
+            companyId: sample.companyId,
+            deliveryAt: sample.deliveryAt,
+            status: OrderStatus.CONFIRMED,
+          },
+          select: { ...groupingOrderSelect, id: true, kitchenReadyAt: true },
+          orderBy: { id: 'asc' },
+        })
+      ).filter((order) => this.getCanonicalKey(order) === canonicalKey);
 
-    if (sampleOrder) {
-      baseCompanyId = sampleOrder.companyId;
-      baseDeliveryAt = sampleOrder.deliveryAt;
-      baseAddressId = sampleOrder.deliveryAddressId;
-      baseAddrLine1 = sampleOrder.deliveryAddressLine1Snapshot;
-      baseAddrCity = sampleOrder.deliveryAddressCitySnapshot;
-      baseAddrPostal = sampleOrder.deliveryAddressPostalCodeSnapshot;
-      baseAddrCountry = sampleOrder.deliveryAddressCountrySnapshot;
-    } else {
-      // Reconciling blindly from a key (e.g. from reconcileAll). We parse it.
-      const parts = canonicalKey.split('|');
-      baseCompanyId = parts[0];
-      baseDeliveryAt = new Date(parts[parts.length - 1]);
-      // For a full system reconcile, it's easier to just query all candidate orders for the company/time
-      // and match the canonical key.
+    // Lock referenced Drops before trusting their status: a concurrent OUT_FOR_DELIVERY
+    // transition holds the Drop row, so after this the statuses cannot change under us.
+    const referencedDropIds = [
+      ...new Set(
+        (await loadMatching()).flatMap(({ deliveryDropId }) =>
+          deliveryDropId ? [deliveryDropId] : [],
+        ),
+      ),
+    ].sort();
+    for (const dropId of referencedDropIds) {
+      await tx.$queryRaw`SELECT id FROM "DeliveryDrop" WHERE id = ${dropId}::uuid FOR UPDATE`;
+    }
+    const drops = new Map(
+      (
+        await tx.deliveryDrop.findMany({
+          where: { id: { in: referencedDropIds } },
+          select: { id: true, status: true },
+        })
+      ).map((drop) => [drop.id, drop.status]),
+    );
+
+    const matching = await loadMatching();
+    const eligible = matching.filter(
+      ({ deliveryDropId }) =>
+        !deliveryDropId ||
+        drops.get(deliveryDropId) === DeliveryDropStatus.DISPATCH_READY,
+    );
+    if (
+      eligible.length === 0 ||
+      !eligible.every(({ kitchenReadyAt }) => kitchenReadyAt !== null)
+    )
+      return { dropId: null };
+
+    const mutableDropIds = [
+      ...new Set(
+        eligible.flatMap(({ deliveryDropId }) =>
+          deliveryDropId ? [deliveryDropId] : [],
+        ),
+      ),
+    ].sort();
+    let dropId = mutableDropIds[0];
+    if (!dropId) {
+      const first = eligible[0]!;
+      const driverStaffUserId = await this.resolveDefaultDriver(
+        tx,
+        sample.companyId,
+      );
+      dropId = (
+        await tx.deliveryDrop.create({
+          data: {
+            companyId: sample.companyId,
+            scheduledDeliveryAt: sample.deliveryAt,
+            addressLabelSnapshot: first.deliveryAddressLabelSnapshot,
+            addressLine1Snapshot: first.deliveryAddressLine1Snapshot,
+            addressLine2Snapshot: first.deliveryAddressLine2Snapshot,
+            addressCitySnapshot: first.deliveryAddressCitySnapshot,
+            addressRegionSnapshot: first.deliveryAddressRegionSnapshot,
+            addressPostalCodeSnapshot: first.deliveryAddressPostalCodeSnapshot,
+            addressCountrySnapshot: first.deliveryAddressCountrySnapshot,
+            status: DeliveryDropStatus.DISPATCH_READY,
+            dispatchReadyAt: new Date(),
+            driverStaffUserId,
+          },
+          select: { id: true },
+        })
+      ).id;
     }
 
-    const candidateOrders = await tx.order.findMany({
-      where: {
-        companyId: baseCompanyId,
-        deliveryAt: baseDeliveryAt,
-        status: OrderStatus.CONFIRMED,
-      },
-      include: { deliveryDrop: true },
-    });
-
-    // Filter to only orders matching this exact canonical key
-    const matchingOrders = candidateOrders.filter((o) => this.getCanonicalKey(o) === canonicalKey);
-    if (matchingOrders.length === 0) return;
-
-    // Filter out orders already attached to immutable drops (OUT_FOR_DELIVERY, DELIVERED)
-    const eligibleOrders = matchingOrders.filter((o) => {
-      if (!o.deliveryDropId) return true;
-      return o.deliveryDrop?.status === DeliveryDropStatus.DISPATCH_READY;
-    });
-
-    if (eligibleOrders.length === 0) return;
-
-    // Check if ALL eligible orders are Kitchen Ready
-    const allReady = eligibleOrders.every((o) => o.kitchenReadyAt !== null);
-    if (!allReady) {
-      // Not ready. Do nothing. They will remain without a drop.
-      return;
-    }
-
-    // All eligible orders are ready. They need to be in a DISPATCH_READY drop.
-    // Find if there is an existing DISPATCH_READY drop for any of these orders.
-    let existingDropId = eligibleOrders.find((o) => o.deliveryDropId)?.deliveryDropId;
-
-    if (!existingDropId) {
-      // Create a new DISPATCH_READY drop
-      const firstOrder = eligibleOrders[0];
-      
-      // Resolve default driver
-      const company = await tx.company.findUnique({
-        where: { id: baseCompanyId },
-        select: { defaultDriverStaffUserId: true },
-      });
-      
-      let driverIdToAssign: string | null = null;
-      if (company?.defaultDriverStaffUserId) {
-        // Validate driver
-        const driver = await tx.staffUser.findUnique({
-          where: { id: company.defaultDriverStaffUserId },
-          include: { role: { include: { permissions: { include: { permission: true } } } } },
-        });
-        
-        if (driver?.isActive) {
-          const hasDeliverPerm = driver.role.permissions.some((rp) => rp.permission.key === 'driver.own_drops.deliver');
-          if (hasDeliverPerm) {
-            driverIdToAssign = driver.id;
-          }
-        }
-      }
-
-      const newDrop = await tx.deliveryDrop.create({
-        data: {
-          companyId: baseCompanyId,
-          scheduledDeliveryAt: baseDeliveryAt,
-          addressLabelSnapshot: firstOrder.deliveryAddressLabelSnapshot,
-          addressLine1Snapshot: firstOrder.deliveryAddressLine1Snapshot,
-          addressLine2Snapshot: firstOrder.deliveryAddressLine2Snapshot,
-          addressCitySnapshot: firstOrder.deliveryAddressCitySnapshot,
-          addressRegionSnapshot: firstOrder.deliveryAddressRegionSnapshot,
-          addressPostalCodeSnapshot: firstOrder.deliveryAddressPostalCodeSnapshot,
-          addressCountrySnapshot: firstOrder.deliveryAddressCountrySnapshot,
-          status: DeliveryDropStatus.DISPATCH_READY,
-          dispatchReadyAt: new Date(),
-          driverStaffUserId: driverIdToAssign,
-        }
-      });
-      existingDropId = newDrop.id;
-    }
-
-    // Attach all unattached eligible orders to this drop
-    const unattachedIds = eligibleOrders.filter((o) => o.deliveryDropId !== existingDropId).map((o) => o.id);
-    if (unattachedIds.length > 0) {
+    const toAttach = eligible.filter(
+      ({ deliveryDropId }) => deliveryDropId !== dropId,
+    );
+    if (toAttach.length > 0) {
       await tx.order.updateMany({
-        where: { id: { in: unattachedIds } },
-        data: { deliveryDropId: existingDropId },
+        where: { id: { in: toAttach.map(({ id }) => id) } },
+        data: { deliveryDropId: dropId },
       });
-
-      // Record events
-      const now = new Date();
-      await tx.orderEvent.createMany({
-        data: unattachedIds.map((id) => ({
-          orderId: id,
-          type: OrderEventType.DISPATCH_READY,
-          occurredAt: now,
-          message: 'Order attached to Delivery Drop (Dispatch Ready)',
-        })),
-      });
+      const newlyReady = toAttach.filter(
+        ({ deliveryDropId }) => !deliveryDropId,
+      );
+      if (newlyReady.length > 0) {
+        const now = new Date();
+        await tx.orderEvent.createMany({
+          data: newlyReady.map(({ id }) => ({
+            orderId: id,
+            type: OrderEventType.DISPATCH_READY,
+            occurredAt: now,
+            message: 'Order attached to Delivery Drop (Dispatch Ready)',
+          })),
+        });
+      }
     }
+    for (const extraDropId of mutableDropIds.slice(1))
+      await this.deleteDropIfEmpty(tx, extraDropId);
+    return { dropId };
+  }
+
+  /** Company default Driver only if active and actually holding the delivery permission; otherwise unassigned. */
+  private async resolveDefaultDriver(
+    tx: Prisma.TransactionClient,
+    companyId: string,
+  ): Promise<string | null> {
+    const company = await tx.company.findUnique({
+      where: { id: companyId },
+      select: { defaultDriverStaffUserId: true },
+    });
+    if (!company?.defaultDriverStaffUserId) return null;
+    const driver = await tx.staffUser.findFirst({
+      where: {
+        id: company.defaultDriverStaffUserId,
+        isActive: true,
+        role: {
+          permissions: {
+            some: { permission: { key: DRIVER_DELIVER_PERMISSION } },
+          },
+        },
+      },
+      select: { id: true },
+    });
+    if (!driver)
+      this.logger.warn(
+        `Company ${companyId} default driver is not an active driver; Drop left unassigned.`,
+      );
+    return driver?.id ?? null;
   }
 
   /**
-   * Idempotent failure recovery / manual grouping trigger.
-   * Finds all CONFIRMED orders that are kitchenReadyAt != null but have no DeliveryDrop,
-   * and processes their grouping keys.
+   * Idempotent repair / manual grouping trigger: reconciles every key that has a
+   * CONFIRMED, Kitchen-ready Order without a Drop. Each key runs in its own
+   * transaction; one failing key does not block the others.
    */
   async reconcileAll() {
-    const unattachedReadyOrders = await this.prisma.order.findMany({
+    const unattached = await this.prisma.order.findMany({
       where: {
         status: OrderStatus.CONFIRMED,
         kitchenReadyAt: { not: null },
         deliveryDropId: null,
       },
-      select: {
-        id: true,
-        companyId: true,
-        deliveryAddressId: true,
-        deliveryAddressLine1Snapshot: true,
-        deliveryAddressCitySnapshot: true,
-        deliveryAddressPostalCodeSnapshot: true,
-        deliveryAddressCountrySnapshot: true,
-        deliveryAt: true,
-        deliveryAddressLabelSnapshot: true,
-        deliveryAddressLine2Snapshot: true,
-        deliveryAddressRegionSnapshot: true,
-      }
+      select: groupingOrderSelect,
     });
+    const samples = new Map<string, GroupingOrder>();
+    for (const order of unattached) {
+      const key = this.getCanonicalKey(order);
+      if (!samples.has(key)) samples.set(key, order);
+    }
 
-    // Extract unique canonical keys and one sample order for each
-    const keysMap = new Map<string, any>();
-    for (const order of unattachedReadyOrders) {
-      const key = this.getCanonicalKey(order as any);
-      if (!keysMap.has(key)) {
-        keysMap.set(key, order);
+    let processedGroups = 0;
+    const failures: Array<{ key: string; message: string }> = [];
+    for (const [key, sample] of samples) {
+      try {
+        await this.prisma.$transaction((tx) =>
+          this.reconcileGroup(key, tx, sample),
+        );
+        processedGroups++;
+      } catch (error) {
+        this.logger.error(
+          JSON.stringify({
+            event: 'dispatch_reconcile_failed',
+            key,
+            error: error instanceof Error ? error.message : String(error),
+          }),
+        );
+        failures.push({
+          key,
+          message: 'Grouping failed for this delivery group; see server logs.',
+        });
       }
     }
-
-    let processedCount = 0;
-    for (const [key, order] of keysMap.entries()) {
-      await this.prisma.$transaction(async (tx) => {
-        await this.reconcileGroup(key, tx, order);
-      });
-      processedCount++;
-    }
-
-    return { processedGroups: processedCount, unattachedReadyOrdersFound: unattachedReadyOrders.length };
+    return {
+      processedGroups,
+      unattachedReadyOrdersFound: unattached.length,
+      failures,
+    };
   }
 }

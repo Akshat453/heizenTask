@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
 import { referenceDataApi, type NamedReference, type OrderedReference } from "@/lib/api";
@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { Edit2, Plus } from "lucide-react";
 
@@ -50,8 +50,7 @@ export default function ReferenceDataPage() {
   };
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- initial load; fetchRefData sets loading state before awaiting.
     fetchRefData();
   }, []);
 
@@ -81,6 +80,8 @@ function RefSection({ title, type, items, onSaved, hasOrder }: { title: string; 
     resolver: zodResolver(schema),
     defaultValues: { name: "", displayOrder: 0, isActive: true },
   });
+  // Reactive form values (useWatch is React-Compiler compatible; form.watch is not).
+  const watched = useWatch({ control: form.control });
 
   const openModal = (item?: NamedReference | OrderedReference) => {
     if (item) {
@@ -145,7 +146,7 @@ function RefSection({ title, type, items, onSaved, hasOrder }: { title: string; 
                 <div className="flex items-center space-x-2 pt-2">
                   <Checkbox 
                     id={`${type}-active`} 
-                    checked={form.watch("isActive")} 
+                    checked={watched.isActive ?? false} 
                     onCheckedChange={(c) => form.setValue("isActive", !!c)} 
                   />
                   <Label htmlFor={`${type}-active`}>Is Active</Label>

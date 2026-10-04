@@ -1,30 +1,23 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 'use client';
 
 import { useEffect, useState } from 'react';
-import { apiRequest } from '@/lib/api-client';
+import { describeError } from '@/lib/api-client';
+import { dashboardApi, type KitchenDashboardData } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ChefHat, AlertTriangle, Clock, Flame } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 
 export function KitchenDashboard() {
-  const [data, setData] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
+  const [data, setData] = useState<KitchenDashboardData | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    async function fetchDashboard() {
-      try {
-        const res = await apiRequest<any>('/dashboard/kitchen');
-        setData(res.data);
-      } catch (err: any) {
-        setError(err.message || 'Failed to load dashboard');
-      } finally {
-        setLoading(false);
-      }
-    }
-    fetchDashboard();
+    // The API returns { businessDate, metrics } directly (no `data` envelope).
+    dashboardApi
+      .kitchen()
+      .then(setData)
+      .catch((err: unknown) => setError(describeError(err, 'Failed to load dashboard')));
   }, []);
 
   if (error) {
@@ -49,7 +42,7 @@ export function KitchenDashboard() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {loading ? <Skeleton className="h-8 w-16" /> : data.metrics.notStarted}
+              {!data ? <Skeleton className="h-8 w-16" /> : data.metrics.notStarted}
             </div>
             <p className="text-xs text-muted-foreground mt-1">Prep units queued</p>
           </CardContent>
@@ -63,35 +56,35 @@ export function KitchenDashboard() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {loading ? <Skeleton className="h-8 w-16" /> : data.metrics.started}
+              {!data ? <Skeleton className="h-8 w-16" /> : data.metrics.started}
             </div>
             <p className="text-xs text-muted-foreground mt-1">Currently cooking</p>
           </CardContent>
         </Card>
 
         {/* At Risk */}
-        <Card className={data?.metrics.atRisk > 0 ? "border-orange-500/50 bg-orange-500/5" : ""}>
+        <Card className={(data?.metrics.atRisk ?? 0) > 0 ? "border-orange-500/50 bg-orange-500/5" : ""}>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">At Risk</CardTitle>
-            <AlertTriangle className={`h-4 w-4 ${data?.metrics.atRisk > 0 ? "text-orange-500" : "text-muted-foreground"}`} />
+            <AlertTriangle className={`h-4 w-4 ${(data?.metrics.atRisk ?? 0) > 0 ? "text-orange-500" : "text-muted-foreground"}`} />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {loading ? <Skeleton className="h-8 w-16" /> : data.metrics.atRisk}
+              {!data ? <Skeleton className="h-8 w-16" /> : data.metrics.atRisk}
             </div>
             <p className="text-xs text-muted-foreground mt-1">Nearing deadline</p>
           </CardContent>
         </Card>
 
         {/* Late */}
-        <Card className={data?.metrics.late > 0 ? "border-destructive/50 bg-destructive/5" : ""}>
+        <Card className={(data?.metrics.late ?? 0) > 0 ? "border-destructive/50 bg-destructive/5" : ""}>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Late</CardTitle>
-            <AlertTriangle className={`h-4 w-4 ${data?.metrics.late > 0 ? "text-destructive" : "text-muted-foreground"}`} />
+            <AlertTriangle className={`h-4 w-4 ${(data?.metrics.late ?? 0) > 0 ? "text-destructive" : "text-muted-foreground"}`} />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {loading ? <Skeleton className="h-8 w-16" /> : data.metrics.late}
+              {!data ? <Skeleton className="h-8 w-16" /> : data.metrics.late}
             </div>
             <p className="text-xs text-muted-foreground mt-1">Past planned ready time</p>
           </CardContent>
@@ -107,7 +100,7 @@ export function KitchenDashboard() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {loading ? (
+          {!data ? (
             <div className="space-y-2">
               <Skeleton className="h-6 w-48" />
               <Skeleton className="h-4 w-64" />

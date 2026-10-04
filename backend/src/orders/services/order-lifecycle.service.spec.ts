@@ -4,8 +4,8 @@ import { OrderLifecycleService } from './order-lifecycle.service.js';
 import { PrismaService } from '../../prisma/prisma.service.js';
 import { OrderCreationService } from './order-creation.service.js';
 import { BusinessTimeService } from '../../business-time/business-time.service.js';
-import { OrderStatus } from '../../generated/prisma/enums.js';
 import { DeliveryGroupingService } from '../../dispatch/services/delivery-grouping.service.js';
+import { OrderValidationService } from './order-validation.service.js';
 
 describe('OrderLifecycleService', () => {
   let service: OrderLifecycleService;
@@ -24,12 +24,13 @@ describe('OrderLifecycleService', () => {
 
     creation = {
       update: vi.fn(),
+      place: vi.fn(),
     };
 
     businessTime = {
       isDeliveryDateOpen: vi.fn(),
     };
-    
+
     deliveryGrouping = {
       getCanonicalKey: vi.fn().mockReturnValue('mock-key'),
       reconcileGroup: vi.fn(),
@@ -42,6 +43,7 @@ describe('OrderLifecycleService', () => {
         { provide: OrderCreationService, useValue: creation },
         { provide: BusinessTimeService, useValue: businessTime },
         { provide: DeliveryGroupingService, useValue: deliveryGrouping },
+        { provide: OrderValidationService, useValue: {} },
       ],
     }).compile();
 
@@ -52,21 +54,8 @@ describe('OrderLifecycleService', () => {
     expect(service).toBeDefined();
   });
 
-  it('places a draft order', async () => {
-    prisma.order.findUnique.mockResolvedValue({ id: 'ord1', status: OrderStatus.DRAFT, deliveryDate: new Date() });
-    businessTime.isDeliveryDateOpen.mockResolvedValue(true);
-    
+  it('places a draft order through the locked revalidation transaction', async () => {
     await service.place('ord1', 'staff1');
-    expect(creation.update).toHaveBeenCalledWith('ord1', { placeOrder: true }, 'staff1');
-  });
-
-  it('cancels a placed order', async () => {
-    prisma.order.findUnique.mockResolvedValue({ id: 'ord1', status: OrderStatus.PLACED });
-    
-    await service.cancel('ord1', 'staff1');
-    expect(prisma.order.update).toHaveBeenCalledWith(expect.objectContaining({
-      where: { id: 'ord1' },
-      data: expect.objectContaining({ status: OrderStatus.CANCELLED })
-    }));
+    expect(creation.place).toHaveBeenCalledWith('ord1', 'staff1');
   });
 });

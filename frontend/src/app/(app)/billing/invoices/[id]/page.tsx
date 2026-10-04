@@ -7,7 +7,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
-import { apiRequest } from '@/lib/api-client';
+import { ApiError, describeError } from '@/lib/api-client';
+import { billingApi, type InvoiceDetail } from '@/lib/api';
 
 function formatCurrency(cents: number) {
   return (cents / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
@@ -18,38 +19,33 @@ export default function InvoiceDetailPage() {
   const router = useRouter();
   const id = params.id as string;
 
-  const [invoice, setInvoice] = useState<any>(null);
+  const [invoice, setInvoice] = useState<InvoiceDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [markingPaid, setMarkingPaid] = useState(false);
 
   useEffect(() => {
-    async function load() {
-      try {
-        const data = await apiRequest<any>(`/invoices/${id}`);
-        setInvoice(data);
-      } catch (e: any) {
-        if (e.status === 404) {
+    billingApi
+      .getInvoice(id)
+      .then(setInvoice)
+      .catch((e: unknown) => {
+        if (e instanceof ApiError && e.status === 404) {
           router.push('/billing');
           return;
         }
-        toast.error(e.message);
-      } finally {
-        setLoading(false);
-      }
-    }
-    load();
+        toast.error(describeError(e));
+      })
+      .finally(() => setLoading(false));
   }, [id, router]);
 
   const markAsPaid = async () => {
     setMarkingPaid(true);
     try {
-      const updated = await apiRequest<any>(`/invoices/${id}/pay`, {
-        method: 'POST',
-      });
-      setInvoice(updated);
+      await billingApi.markPaid(id);
+      // The pay endpoint returns the bare invoice; reload the full detail (company + orders).
+      setInvoice(await billingApi.getInvoice(id));
       toast.success('Invoice marked as paid');
-    } catch (e: any) {
-      toast.error(e.message);
+    } catch (e: unknown) {
+      toast.error(describeError(e));
     } finally {
       setMarkingPaid(false);
     }
@@ -87,11 +83,9 @@ export default function InvoiceDetailPage() {
           <CardContent>
             <div className="space-y-2">
               <div className="font-semibold text-lg">{invoice.company.name}</div>
-              {invoice.company.billingAddress && (
-                <div className="text-muted-foreground whitespace-pre-line">
-                  {invoice.company.billingAddress}
-                </div>
-              )}
+              <div className="text-muted-foreground">
+                {invoice.company.billingContactName} · {invoice.company.billingContactEmail}
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -135,8 +129,8 @@ export default function InvoiceDetailPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {invoice.orders.map((invOrder: any) => (
-                <TableRow key={invOrder.id}>
+              {invoice.orders.map((invOrder) => (
+                <TableRow key={invOrder.orderId}>
                   <TableCell className="font-medium">{invOrder.order.orderNumber}</TableCell>
                   <TableCell>{invOrder.order.employee.name}</TableCell>
                   <TableCell>{new Date(invOrder.order.deliveryDate).toLocaleDateString()}</TableCell>

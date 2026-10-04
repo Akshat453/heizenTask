@@ -1,107 +1,221 @@
-import { vi, describe, beforeEach, it, expect } from 'vitest';
-import { Test, TestingModule } from '@nestjs/testing';
-import { OrderValidationService } from './order-validation.service.js';
-import { PrismaService } from '../../prisma/prisma.service.js';
-import { BusinessTimeService } from '../../business-time/business-time.service.js';
-import { ConflictException, BadRequestException, NotFoundException } from '@nestjs/common';
+import { ConflictException } from '@nestjs/common';
+import { describe, expect, it } from 'vitest';
 import { DayOfWeek } from '../../generated/prisma/enums.js';
+import type { OrderableMenu } from '../../menu/orderability.service.js';
+import type { PrismaDb } from '../../pricing/price-resolver.service.js';
+import { OrderValidationService } from './order-validation.service.js';
 
-describe('OrderValidationService', () => {
-  let service: OrderValidationService;
-  let prisma: any;
-  let businessTime: any;
+const TZ = 'Asia/Kolkata';
+const MONDAY = '2026-10-05';
 
-  beforeEach(async () => {
-    prisma = {
-      employee: { findUnique: vi.fn() },
-      companyAddress: { findUnique: vi.fn() },
-      dish: { findMany: vi.fn() },
-    };
+const addresses: Record<
+  string,
+  { id: string; companyId: string; isActive: boolean }
+> = {
+  home: { id: 'home', companyId: 'acme', isActive: true },
+  annex: { id: 'annex', companyId: 'acme', isActive: true },
+  closed: { id: 'closed', companyId: 'acme', isActive: false },
+  foreign: { id: 'foreign', companyId: 'other', isActive: true },
+};
+const packaging: Record<
+  string,
+  { id: string; name: string; isActive: boolean }
+> = {
+  box: { id: 'box', name: 'Box', isActive: true },
+  tray: { id: 'tray', name: 'Tray', isActive: true },
+  retired: { id: 'retired', name: 'Retired', isActive: false },
+};
 
-    businessTime = {
-      isDeliveryDateOpen: vi.fn(),
-    };
+function fakeDb(
+  options: { workingDays?: DayOfWeek[]; holiday?: boolean } = {},
+): PrismaDb {
+  const db = {
+    company: {
+      findUniqueOrThrow: async () => ({
+        id: 'acme',
+        defaultDeliveryTime: new Date(Date.UTC(1970, 0, 1, 12, 30)),
+        defaultPackagingTypeId: 'box',
+        deliveryLeadMinutes: 45,
+        workingDays: (options.workingDays ?? [DayOfWeek.MONDAY]).map(
+          (dayOfWeek) => ({ companyId: 'acme', dayOfWeek }),
+        ),
+        holidays: options.holiday ? [{ id: 'h' }] : [],
+      }),
+    },
+    companyAddress: {
+      findUnique: async ({ where }: { where: { id: string } }) =>
+        addresses[where.id]
+          ? {
+              ...addresses[where.id],
+              label: where.id,
+              line1: 'l1',
+              line2: null,
+              city: 'c',
+              region: null,
+              postalCode: null,
+              country: 'IN',
+            }
+          : null,
+    },
+    packagingType: {
+      findFirst: async ({
+        where,
+      }: {
+        where: { id: string; isActive: boolean };
+      }) => {
+        const found = packaging[where.id];
+        return found && found.isActive === where.isActive ? found : null;
+      },
+    },
+  };
+  return db as unknown as PrismaDb;
+}
 
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        OrderValidationService,
-        { provide: PrismaService, useValue: prisma },
-        { provide: BusinessTimeService, useValue: businessTime },
-      ],
-    }).compile();
+function menu(flags: Partial<OrderableMenu['employee']> = {}): OrderableMenu {
+  return {
+    categories: [],
+    dishesById: new Map(),
+    tierId: 'tier',
+    employee: {
+      id: 'emp',
+      name: 'Emp',
+      companyId: 'acme',
+      defaultDeliveryAddressId: 'home',
+      canChooseDeliveryAddress: false,
+      canChangeDeliveryTime: false,
+      canChangePackaging: false,
+      allergens: [],
+      dietaryTags: [],
+      ...flags,
+    },
+  };
+}
 
-    service = module.get<OrderValidationService>(OrderValidationService);
+const service = new OrderValidationService();
+const resolve = (
+  params: Partial<Parameters<OrderValidationService['resolveDelivery']>[1]> & {
+    db?: PrismaDb;
+  } = {},
+) =>
+  service.resolveDelivery(params.db ?? fakeDb(), {
+    menu: menu(),
+    deliveryDate: MONDAY,
+    timezone: TZ,
+    request: {},
+    ...params,
   });
 
-  it('should be defined', () => {
-    expect(service).toBeDefined();
+describe('OrderValidationService.resolveDelivery', () => {
+  it('CREATE: omitted choices resolve to Employee/Company defaults in business time', async () => {
+    const { data, deliveryLeadMinutes } = await resolve();
+    expect(data).toMatchObject({
+      deliveryAddressId: 'home',
+      packagingTypeId: 'box',
+      packagingNameSnapshot: 'Box',
+    });
+    expect(data.deliveryAt!.toISOString()).toBe('2026-10-05T07:00:00.000Z'); // 12:30 IST
+    expect(deliveryLeadMinutes).toBe(45);
   });
 
-  describe('validateOrderGraph', () => {
-    const validEmployee = {
-      id: 'emp1',
-      companyId: 'comp1',
-      defaultDeliveryAddressId: 'addr1',
-      company: {
-        id: 'comp1',
-        workingDays: [{ dayOfWeek: DayOfWeek.MONDAY }],
-        holidays: [],
-      }
+  it('enforces the Company delivery calendar', async () => {
+    await expect(
+      resolve({ db: fakeDb({ workingDays: [DayOfWeek.TUESDAY] }) }),
+    ).rejects.toThrow(/day of the week/);
+    await expect(resolve({ db: fakeDb({ holiday: true }) })).rejects.toThrow(
+      /holiday/,
+    );
+  });
+
+  it('requires canChooseDeliveryAddress for a non-default address', async () => {
+    await expect(
+      resolve({ request: { deliveryAddressId: 'annex' } }),
+    ).rejects.toThrow(/non-default delivery address/);
+    const { data } = await resolve({
+      menu: menu({ canChooseDeliveryAddress: true }),
+      request: { deliveryAddressId: 'annex' },
+    });
+    expect(data.deliveryAddressId).toBe('annex');
+    // Requesting the default explicitly needs no flag.
+    await expect(
+      resolve({ request: { deliveryAddressId: 'home' } }),
+    ).resolves.toBeDefined();
+  });
+
+  it('requires an active address of the Employee’s current Company', async () => {
+    const allowed = menu({ canChooseDeliveryAddress: true });
+    await expect(
+      resolve({ menu: allowed, request: { deliveryAddressId: 'foreign' } }),
+    ).rejects.toThrow(ConflictException);
+    await expect(
+      resolve({ menu: allowed, request: { deliveryAddressId: 'closed' } }),
+    ).rejects.toThrow(ConflictException);
+  });
+
+  it('requires canChangeDeliveryTime for a non-default time', async () => {
+    await expect(
+      resolve({ request: { deliveryTime: '13:00' } }),
+    ).rejects.toThrow(/non-default delivery time/);
+    const { data } = await resolve({
+      menu: menu({ canChangeDeliveryTime: true }),
+      request: { deliveryTime: '13:00' },
+    });
+    expect(data.deliveryAt!.toISOString()).toBe('2026-10-05T07:30:00.000Z');
+    await expect(
+      resolve({ request: { deliveryTime: '12:30' } }),
+    ).resolves.toBeDefined();
+  });
+
+  it('requires canChangePackaging for non-default packaging, which must be active', async () => {
+    await expect(
+      resolve({ request: { packagingTypeId: 'tray' } }),
+    ).rejects.toThrow(/non-default packaging/);
+    await expect(
+      resolve({
+        menu: menu({ canChangePackaging: true }),
+        request: { packagingTypeId: 'retired' },
+      }),
+    ).rejects.toThrow(/active/);
+    const { data } = await resolve({
+      menu: menu({ canChangePackaging: true }),
+      request: { packagingTypeId: 'tray' },
+    });
+    expect(data.packagingTypeId).toBe('tray');
+  });
+
+  it('UPDATE: omitted or unchanged fields preserve the current (possibly overridden) selection', async () => {
+    const existing = {
+      deliveryAddressId: 'annex',
+      deliveryAt: new Date('2026-10-05T09:00:00.000Z'),
+      packagingTypeId: 'tray',
+    }; // 14:30 IST
+    const omitted = await resolve({ existing });
+    expect(omitted.data).toEqual({});
+    // Echoing the current non-default values must not be rejected for lack of flags.
+    const echoed = await resolve({
+      existing,
+      request: {
+        deliveryAddressId: 'annex',
+        deliveryTime: '14:30',
+        packagingTypeId: 'tray',
+      },
+    });
+    expect(echoed.data).toEqual({});
+  });
+
+  it('UPDATE: an explicit change follows the Employee flags', async () => {
+    const existing = {
+      deliveryAddressId: 'home',
+      deliveryAt: new Date('2026-10-05T07:00:00.000Z'),
+      packagingTypeId: 'box',
     };
-
-    it('throws NotFoundException if employee not found', async () => {
-      prisma.employee.findUnique.mockResolvedValue(null);
-      await expect(service.validateOrderGraph('emp1', '2025-01-06', []))
-        .rejects.toThrow(NotFoundException);
+    await expect(
+      resolve({ existing, request: { deliveryTime: '15:00' } }),
+    ).rejects.toThrow(/non-default delivery time/);
+    const { data } = await resolve({
+      existing,
+      menu: menu({ canChangeDeliveryTime: true }),
+      request: { deliveryTime: '15:00' },
     });
-
-    it('throws ConflictException if delivery cutoff has passed', async () => {
-      prisma.employee.findUnique.mockResolvedValue(validEmployee);
-      businessTime.isDeliveryDateOpen.mockResolvedValue(false);
-      
-      await expect(service.validateOrderGraph('emp1', '2025-01-06', []))
-        .rejects.toThrow(ConflictException);
-    });
-
-    it('throws ConflictException if day of week is not a working day for the company', async () => {
-      prisma.employee.findUnique.mockResolvedValue(validEmployee);
-      businessTime.isDeliveryDateOpen.mockResolvedValue(true);
-      // 2025-01-07 is a Tuesday, but company only works Mondays
-      
-      await expect(service.validateOrderGraph('emp1', '2025-01-07', []))
-        .rejects.toThrow(ConflictException);
-    });
-
-    it('throws BadRequestException if no lines are provided', async () => {
-      prisma.employee.findUnique.mockResolvedValue(validEmployee);
-      businessTime.isDeliveryDateOpen.mockResolvedValue(true);
-      prisma.companyAddress.findUnique.mockResolvedValue({ id: 'addr1', companyId: 'comp1', isActive: true });
-      // 2025-01-06 is a Monday
-      
-      await expect(service.validateOrderGraph('emp1', '2025-01-06', []))
-        .rejects.toThrow(BadRequestException);
-    });
-
-    it('validates a correct order successfully', async () => {
-      prisma.employee.findUnique.mockResolvedValue(validEmployee);
-      businessTime.isDeliveryDateOpen.mockResolvedValue(true);
-      prisma.companyAddress.findUnique.mockResolvedValue({ id: 'addr1', companyId: 'comp1', isActive: true });
-      
-      prisma.dish.findMany.mockResolvedValue([{
-        id: 'dish1',
-        isActive: true,
-        minimumOrderQuantity: null,
-        hiddenByCompanies: [],
-        optionGroups: []
-      }]);
-
-      const result = await service.validateOrderGraph('emp1', '2025-01-06', [{
-        dishId: 'dish1',
-        combinations: [{ quantity: 1, options: [] }]
-      }]);
-
-      expect(result.employee).toEqual(validEmployee);
-      expect(result.company).toEqual(validEmployee.company);
-    });
+    expect(data).toEqual({ deliveryAt: new Date('2026-10-05T09:30:00.000Z') });
   });
 });

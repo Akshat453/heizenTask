@@ -14,7 +14,11 @@ describe('DispatchLifecycleService', () => {
           provide: PrismaService,
           useValue: {
             $transaction: vi.fn(),
-            deliveryDrop: { findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
+            deliveryDrop: {
+              findUnique: vi.fn(),
+              update: vi.fn(),
+              updateMany: vi.fn(),
+            },
             staffUser: { findUnique: vi.fn() },
           },
         },

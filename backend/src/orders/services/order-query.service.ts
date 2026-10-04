@@ -1,4 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import type { Prisma } from '../../generated/prisma/client.js';
+import { dbDateFromIsoDate } from '../../business-time/business-time.utils.js';
 import { PrismaService } from '../../prisma/prisma.service.js';
 import { OrderQueryDto } from '../dto/order.dto.js';
 
@@ -11,12 +13,20 @@ export class OrderQueryService {
     const pageSize = Math.min(query.pageSize ?? 20, 100);
     const skip = (page - 1) * pageSize;
 
-    const where: any = {};
-    if (query.deliveryDateFrom) where.deliveryDate = { ...where.deliveryDate, gte: new Date(query.deliveryDateFrom) };
-    if (query.deliveryDateTo) where.deliveryDate = { ...where.deliveryDate, lte: new Date(query.deliveryDateTo) };
+    const where: Prisma.OrderWhereInput = {};
+    if (query.deliveryDateFrom || query.deliveryDateTo) {
+      where.deliveryDate = {
+        ...(query.deliveryDateFrom
+          ? { gte: dbDateFromIsoDate(query.deliveryDateFrom) }
+          : {}),
+        ...(query.deliveryDateTo
+          ? { lte: dbDateFromIsoDate(query.deliveryDateTo) }
+          : {}),
+      };
+    }
     if (query.status) where.status = query.status;
     if (query.companyId) where.companyId = query.companyId;
-    
+
     if (query.invoiced === true) where.invoiceOrder = { isNot: null };
     else if (query.invoiced === false) where.invoiceOrder = null;
 
@@ -39,8 +49,8 @@ export class OrderQueryService {
           employee: { select: { name: true } },
           company: { select: { name: true } },
           invoiceOrder: true,
-        }
-      })
+        },
+      }),
     ]);
 
     return {
@@ -49,8 +59,8 @@ export class OrderQueryService {
         page,
         pageSize,
         totalItems,
-        totalPages: Math.ceil(totalItems / pageSize)
-      }
+        totalPages: Math.ceil(totalItems / pageSize),
+      },
     };
   }
 
@@ -63,16 +73,16 @@ export class OrderQueryService {
         lines: {
           include: {
             combinations: {
-              include: { options: true }
-            }
-          }
+              include: { options: true },
+            },
+          },
         },
         events: {
           orderBy: { occurredAt: 'asc' },
-          include: { actor: { select: { name: true } } }
+          include: { actor: { select: { name: true } } },
         },
         invoiceOrder: true,
-      }
+      },
     });
     if (!order) throw new NotFoundException('Order not found');
     return order;

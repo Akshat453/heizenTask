@@ -2,6 +2,11 @@ import { Injectable } from '@nestjs/common';
 import { Temporal } from '@js-temporal/polyfill';
 import type { DayOfWeek } from '../generated/prisma/enums.js';
 import { SettingsService } from '../settings/settings.service.js';
+import {
+  businessLocalDateTimeToInstant,
+  type LocalTime,
+  parseIsoDate,
+} from './business-time.utils.js';
 
 /** Maps Prisma DayOfWeek enum to Temporal.PlainDate.dayOfWeek (1=Mon, 7=Sun). */
 const DAY_TO_ISO: Record<DayOfWeek, number> = {
@@ -28,6 +33,11 @@ export type CutoffInfo = {
 @Injectable()
 export class BusinessTimeService {
   constructor(private readonly settings: SettingsService) {}
+
+  /** Current instant. The single clock read used by business-time decisions. */
+  now(): Temporal.Instant {
+    return Temporal.Now.instant();
+  }
 
   /**
    * Return the cutoff instant for a given delivery date (YYYY-MM-DD) in the kitchen timezone.
@@ -67,7 +77,9 @@ export class BusinessTimeService {
     // Build a set of holiday date strings in 'YYYY-MM-DD' format (timezone-agnostic, stored as UTC midnight)
     const holidaySet = new Set(
       cfg.holidayDates.map((d) => {
-        const pd = Temporal.Instant.fromEpochMilliseconds(d.getTime()).toZonedDateTimeISO('UTC').toPlainDate();
+        const pd = Temporal.Instant.fromEpochMilliseconds(d.getTime())
+          .toZonedDateTimeISO('UTC')
+          .toPlainDate();
         return pd.toString();
       }),
     );
@@ -76,22 +88,30 @@ export class BusinessTimeService {
     const cutoffHour = cfg.cutoffTime.getUTCHours();
     const cutoffMinute = cfg.cutoffTime.getUTCMinutes();
 
-    let cursor = Temporal.PlainDate.from(deliveryDateIso);
+    let cursor = parseIsoDate(deliveryDateIso);
     let daysRemaining = cfg.cutoffWorkingDayCount;
 
     while (daysRemaining > 0) {
       cursor = cursor.subtract({ days: 1 });
-      if (workingDaySet.has(cursor.dayOfWeek) && !holidaySet.has(cursor.toString())) {
+      if (
+        workingDaySet.has(cursor.dayOfWeek) &&
+        !holidaySet.has(cursor.toString())
+      ) {
         daysRemaining--;
       }
     }
 
     const cutoffDate = cursor.toString();
-    const cutoffZdt = cursor
-      .toZonedDateTime({ timeZone: tz, plainTime: Temporal.PlainTime.from({ hour: cutoffHour, minute: cutoffMinute }) });
+    const cutoffZdt = cursor.toZonedDateTime({
+      timeZone: tz,
+      plainTime: Temporal.PlainTime.from({
+        hour: cutoffHour,
+        minute: cutoffMinute,
+      }),
+    });
 
-    const nowZdt = Temporal.Now.zonedDateTimeISO(tz);
-    const passed = Temporal.ZonedDateTime.compare(nowZdt, cutoffZdt) >= 0;
+    const passed =
+      Temporal.Instant.compare(this.now(), cutoffZdt.toInstant()) >= 0;
 
     return {
       deliveryDate: deliveryDateIso,
@@ -115,15 +135,21 @@ export class BusinessTimeService {
     const companyDaySet = new Set(companyWorkingDays.map((d) => DAY_TO_ISO[d]));
     const companyHolidaySet = new Set(
       companyHolidayDates.map((d) =>
-        Temporal.Instant.fromEpochMilliseconds(d.getTime()).toZonedDateTimeISO('UTC').toPlainDate().toString(),
+        Temporal.Instant.fromEpochMilliseconds(d.getTime())
+          .toZonedDateTimeISO('UTC')
+          .toPlainDate()
+          .toString(),
       ),
     );
 
-    const today = Temporal.Now.plainDateISO(tz);
+    const today = this.now().toZonedDateTimeISO(tz).toPlainDate();
     const results: string[] = [];
     for (let i = 1; i <= lookAheadDays; i++) {
       const candidate = today.add({ days: i });
-      if (companyDaySet.has(candidate.dayOfWeek) && !companyHolidaySet.has(candidate.toString())) {
+      if (
+        companyDaySet.has(candidate.dayOfWeek) &&
+        !companyHolidaySet.has(candidate.toString())
+      ) {
         // Also check that the cutoff hasn't already passed for this date
         const { passed } = this.computeCutoff(candidate.toString(), cfg);
         if (!passed) results.push(candidate.toString());
@@ -137,13 +163,23 @@ export class BusinessTimeService {
     return cfg.timezone;
   }
 
-  async getBusinessDateBounds(isoDate: string): Promise<{ start: Date; end: Date }> {
+  async getBusinessDateBounds(
+    isoDate: string,
+  ): Promise<{ start: Date; end: Date }> {
     const cfg = await this.settings.loadForBusinessTime();
     const tz = cfg.timezone;
-    const pd = Temporal.PlainDate.from(isoDate);
-    const startZdt = pd.toZonedDateTime({ timeZone: tz, plainTime: Temporal.PlainTime.from({ hour: 0, minute: 0 }) });
-    const endZdt = pd.add({ days: 1 }).toZonedDateTime({ timeZone: tz, plainTime: Temporal.PlainTime.from({ hour: 0, minute: 0 }) });
-    
+    const pd = parseIsoDate(isoDate);
+    const startZdt = pd.toZonedDateTime({
+      timeZone: tz,
+      plainTime: Temporal.PlainTime.from({ hour: 0, minute: 0 }),
+    });
+    const endZdt = pd
+      .add({ days: 1 })
+      .toZonedDateTime({
+        timeZone: tz,
+        plainTime: Temporal.PlainTime.from({ hour: 0, minute: 0 }),
+      });
+
     return {
       start: new Date(startZdt.epochMilliseconds),
       end: new Date(endZdt.epochMilliseconds),
@@ -152,6 +188,14 @@ export class BusinessTimeService {
 
   async getBusinessDate(): Promise<string> {
     const cfg = await this.settings.loadForBusinessTime();
-    return Temporal.Now.plainDateISO(cfg.timezone).toString();
+    return this.now().toZonedDateTimeISO(cfg.timezone).toPlainDate().toString();
+  }
+
+  /** Business-local delivery date + wall-clock time → UTC instant, in the configured business timezone. */
+  async toBusinessInstant(
+    date: string,
+    time: LocalTime | string,
+  ): Promise<Date> {
+    return businessLocalDateTimeToInstant(date, time, await this.getTimezone());
   }
 }

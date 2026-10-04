@@ -6,7 +6,9 @@ export function rethrowKnownPrismaError(error: unknown): never {
     error instanceof Prisma.PrismaClientKnownRequestError &&
     error.code === 'P2002'
   ) {
-    throw new ConflictException('A record with that unique value already exists.');
+    throw new ConflictException(
+      'A record with that unique value already exists.',
+    );
   }
   throw error;
 }

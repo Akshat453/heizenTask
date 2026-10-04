@@ -1,13 +1,5 @@
-import {
-  Controller,
-  Get,
-  Post,
-  Patch,
-  Param,
-  Body,
-  Query,
-  UseGuards,
-} from '@nestjs/common';
+import { Body, Controller, Get, Patch, Post, Query } from '@nestjs/common';
+import { IdParam } from '../common/decorators/id-param.decorator.js';
 import { RequirePermissions } from '../common/decorators/require-permissions.decorator.js';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 import {
@@ -22,10 +14,7 @@ import { OrderQueryService } from './services/order-query.service.js';
 import { OrderCreationService } from './services/order-creation.service.js';
 import { OrderLifecycleService } from './services/order-lifecycle.service.js';
 import { CutoffService } from './services/cutoff.service.js';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
-import { PermissionsGuard } from '../common/guards/permissions.guard.js';
 
-@UseGuards(JwtAuthGuard, PermissionsGuard)
 @Controller('orders')
 export class OrdersController {
   constructor(
@@ -43,7 +32,7 @@ export class OrdersController {
 
   @RequirePermissions('orders.read')
   @Get(':id')
-  async getOrder(@Param('id') id: string) {
+  async getOrder(@IdParam() id: string) {
     return this.queryService.get(id);
   }
 
@@ -59,7 +48,7 @@ export class OrdersController {
   @RequirePermissions('orders.edit')
   @Patch(':id')
   async updateOrder(
-    @Param('id') id: string,
+    @IdParam() id: string,
     @Body() dto: UpdateOrderDto,
     @CurrentUser('id') staffUserId: string,
   ) {
@@ -69,7 +58,7 @@ export class OrdersController {
   @RequirePermissions('orders.edit')
   @Post(':id/place')
   async placeOrder(
-    @Param('id') id: string,
+    @IdParam() id: string,
     @CurrentUser('id') staffUserId: string,
   ) {
     return this.lifecycleService.place(id, staffUserId);
@@ -78,7 +67,7 @@ export class OrdersController {
   @RequirePermissions('orders.edit')
   @Post(':id/cancel')
   async cancelOrder(
-    @Param('id') id: string,
+    @IdParam() id: string,
     @CurrentUser('id') staffUserId: string,
   ) {
     return this.lifecycleService.cancel(id, staffUserId);
@@ -87,7 +76,7 @@ export class OrdersController {
   @RequirePermissions('orders.override')
   @Post(':id/reject')
   async rejectOrder(
-    @Param('id') id: string,
+    @IdParam() id: string,
     @Body() dto: RejectOrderDto,
     @CurrentUser('id') staffUserId: string,
   ) {
@@ -97,7 +86,7 @@ export class OrdersController {
   @RequirePermissions('orders.override')
   @Patch(':id/delivery-details')
   async overrideDeliveryDetails(
-    @Param('id') id: string,
+    @IdParam() id: string,
     @Body() dto: OverrideDeliveryDetailsDto,
     @CurrentUser('id') staffUserId: string,
   ) {

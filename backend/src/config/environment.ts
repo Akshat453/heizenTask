@@ -22,6 +22,17 @@ const environmentSchema = z
       .enum(['development', 'test', 'production'])
       .default('development'),
     PORT: z.coerce.number().int().positive().max(65_535).default(3001),
+    // Optional: photo proof storage. Credentials use the AWS default provider chain.
+    AWS_REGION: z
+      .string()
+      .trim()
+      .optional()
+      .transform((value) => (value ? value : undefined)),
+    AWS_S3_BUCKET: z
+      .string()
+      .trim()
+      .optional()
+      .transform((value) => (value ? value : undefined)),
   })
   .passthrough();
 

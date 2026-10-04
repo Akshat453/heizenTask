@@ -21,8 +21,6 @@ describe('OrdersController (e2e)', () => {
   });
 
   it('/orders (GET) - fails without auth', () => {
-    return request(app.getHttpServer())
-      .get('/orders')
-      .expect(401);
+    return request(app.getHttpServer()).get('/orders').expect(401);
   });
 });

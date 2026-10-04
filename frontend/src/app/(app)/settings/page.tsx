@@ -25,6 +25,7 @@ const platformSchema = z.object({
   cutoffTime: z.string().min(1, "Cut-off time is required"),
   cutoffWorkingDayCount: z.number().min(0),
   kitchenReadyBufferMinutes: z.number().min(0),
+  atRiskWindowMinutes: z.number().int().min(0).max(240),
 });
 
 const holidaySchema = z.object({
@@ -77,19 +78,19 @@ function PlatformSettingsForm({ defaultValues, onSaved }: { defaultValues: Platf
       cutoffTime: new Date(defaultValues.cutoffTime).toISOString().slice(11, 16), // HH:mm
       cutoffWorkingDayCount: defaultValues.cutoffWorkingDayCount,
       kitchenReadyBufferMinutes: defaultValues.kitchenReadyBufferMinutes,
+      atRiskWindowMinutes: defaultValues.atRiskWindowMinutes,
     },
   });
 
   const onSubmit = async (values: z.infer<typeof platformSchema>) => {
     setSaving(true);
     try {
-      // Convert HH:mm to full ISO date for the backend (it only uses the time part)
-      const dateStr = `1970-01-01T${values.cutoffTime}:00.000Z`;
       await settingsApi.update({
         businessTimezone: values.businessTimezone,
-        cutoffTime: dateStr,
+        cutoffTime: values.cutoffTime, // HH:mm, as the API expects
         cutoffWorkingDayCount: values.cutoffWorkingDayCount,
         kitchenReadyBufferMinutes: values.kitchenReadyBufferMinutes,
+        atRiskWindowMinutes: values.atRiskWindowMinutes,
       });
       toast.success("Platform settings updated");
       onSaved();
@@ -126,6 +127,12 @@ function PlatformSettingsForm({ defaultValues, onSaved }: { defaultValues: Platf
           <Label>Kitchen Ready Buffer (min)</Label>
           <Input type="number" {...form.register("kitchenReadyBufferMinutes", { valueAsNumber: true })} />
           {form.formState.errors.kitchenReadyBufferMinutes && <p className="text-sm text-red-500">{form.formState.errors.kitchenReadyBufferMinutes.message}</p>}
+        </div>
+
+        <div className="space-y-2">
+          <Label>At-Risk Window (min)</Label>
+          <Input type="number" {...form.register("atRiskWindowMinutes", { valueAsNumber: true })} />
+          {form.formState.errors.atRiskWindowMinutes && <p className="text-sm text-red-500">{form.formState.errors.atRiskWindowMinutes.message}</p>}
         </div>
 
         <div className="col-span-2 pt-2">

@@ -1,8 +1,8 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 'use client';
 
 import { useEffect, useState } from 'react';
-import { apiRequest } from '@/lib/api-client';
+import { describeError } from '@/lib/api-client';
+import { dashboardApi, type AdminDashboardData } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Activity, CircleDollarSign, AlertCircle, Truck } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -12,22 +12,15 @@ function formatCurrency(cents: number) {
 }
 
 export function AdminDashboard() {
-  const [data, setData] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
+  const [data, setData] = useState<AdminDashboardData | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    async function fetchDashboard() {
-      try {
-        const res = await apiRequest<any>('/dashboard/admin');
-        setData(res.data);
-      } catch (err: any) {
-        setError(err.message || 'Failed to load dashboard');
-      } finally {
-        setLoading(false);
-      }
-    }
-    fetchDashboard();
+    // The API returns { businessDate, metrics } directly (no `data` envelope).
+    dashboardApi
+      .admin()
+      .then(setData)
+      .catch((err: unknown) => setError(describeError(err, 'Failed to load dashboard')));
   }, []);
 
   if (error) {
@@ -52,7 +45,7 @@ export function AdminDashboard() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {loading ? <Skeleton className="h-8 w-20" /> : data.metrics.todayOrders}
+              {!data ? <Skeleton className="h-8 w-20" /> : data.metrics.todayOrders}
             </div>
             <p className="text-xs text-muted-foreground mt-1">Excludes cancelled & rejected</p>
           </CardContent>
@@ -66,7 +59,7 @@ export function AdminDashboard() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {loading ? <Skeleton className="h-8 w-24" /> : formatCurrency(data.metrics.todayBillableCents)}
+              {!data ? <Skeleton className="h-8 w-24" /> : formatCurrency(data.metrics.todayBillableCents)}
             </div>
             <p className="text-xs text-muted-foreground mt-1">Includes confirmed-then-cancelled</p>
           </CardContent>
@@ -80,24 +73,24 @@ export function AdminDashboard() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {loading ? <Skeleton className="h-8 w-24" /> : formatCurrency(data.metrics.uninvoicedCents)}
+              {!data ? <Skeleton className="h-8 w-24" /> : formatCurrency(data.metrics.uninvoicedCents)}
             </div>
             <p className="text-xs text-muted-foreground mt-1">All dates</p>
           </CardContent>
         </Card>
 
         {/* Late Kitchen Work */}
-        <Card className={data?.metrics.lateKitchenOrders > 0 ? "border-destructive/50 bg-destructive/5" : ""}>
+        <Card className={(data?.metrics.lateKitchenOrders ?? 0) > 0 ? "border-destructive/50 bg-destructive/5" : ""}>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Late Kitchen Work</CardTitle>
-            <AlertCircle className={`h-4 w-4 ${data?.metrics.lateKitchenOrders > 0 ? "text-destructive" : "text-muted-foreground"}`} />
+            <AlertCircle className={`h-4 w-4 ${(data?.metrics.lateKitchenOrders ?? 0) > 0 ? "text-destructive" : "text-muted-foreground"}`} />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {loading ? <Skeleton className="h-8 w-16" /> : `${data.metrics.lateKitchenOrders} orders`}
+              {!data ? <Skeleton className="h-8 w-16" /> : `${data.metrics.lateKitchenOrders} orders`}
             </div>
             <p className="text-xs text-muted-foreground mt-1">
-              {loading ? '...' : `${data.metrics.latePrepUnits} prep units`}
+              {!data ? '...' : `${data.metrics.latePrepUnits} prep units`}
             </p>
           </CardContent>
         </Card>
@@ -110,7 +103,7 @@ export function AdminDashboard() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {loading ? <Skeleton className="h-8 w-16" /> : data.metrics.activeDeliveries}
+              {!data ? <Skeleton className="h-8 w-16" /> : data.metrics.activeDeliveries}
             </div>
             <p className="text-xs text-muted-foreground mt-1">Ready or Out for delivery today</p>
           </CardContent>

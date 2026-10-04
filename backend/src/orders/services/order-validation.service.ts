@@ -1,9 +1,15 @@
-import { Injectable, BadRequestException, NotFoundException, ConflictException } from '@nestjs/common';
-import { PrismaService } from '../../prisma/prisma.service.js';
-import { BusinessTimeService } from '../../business-time/business-time.service.js';
-import { Temporal } from '@js-temporal/polyfill';
-import { CreateOrderDto, OrderLineDto } from '../dto/order.dto.js';
+import { ConflictException, Injectable } from '@nestjs/common';
+import {
+  businessLocalDateTimeToInstant,
+  dbDateFromIsoDate,
+  formatLocalTime,
+  instantToBusinessLocalTime,
+  localTimeFromDbTime,
+  parseIsoDate,
+} from '../../business-time/business-time.utils.js';
 import { DayOfWeek } from '../../generated/prisma/enums.js';
+import type { OrderableMenu } from '../../menu/orderability.service.js';
+import type { PrismaDb } from '../../pricing/price-resolver.service.js';
 
 const ISO_TO_DAY: Record<number, DayOfWeek> = {
   1: DayOfWeek.MONDAY,
@@ -15,163 +21,202 @@ const ISO_TO_DAY: Record<number, DayOfWeek> = {
   7: DayOfWeek.SUNDAY,
 };
 
+export type DeliveryRequest = {
+  deliveryAddressId?: string;
+  deliveryTime?: string;
+  packagingTypeId?: string;
+};
+export type ExistingDelivery = {
+  deliveryAddressId: string | null;
+  deliveryAt: Date;
+  packagingTypeId: string;
+};
+
+/** Order delivery columns to write; omitted keys are left unchanged on update. */
+export type DeliveryData = {
+  deliveryAddressId?: string;
+  deliveryAddressLabelSnapshot?: string;
+  deliveryAddressLine1Snapshot?: string;
+  deliveryAddressLine2Snapshot?: string | null;
+  deliveryAddressCitySnapshot?: string;
+  deliveryAddressRegionSnapshot?: string | null;
+  deliveryAddressPostalCodeSnapshot?: string | null;
+  deliveryAddressCountrySnapshot?: string;
+  deliveryAt?: Date;
+  packagingTypeId?: string;
+  packagingNameSnapshot?: string;
+};
+
+export type ResolvedDelivery = {
+  data: DeliveryData;
+  deliveryLeadMinutes: number;
+};
+
+/**
+ * Server-side delivery rules for Order create/edit:
+ * - delivery date must be a Company working day and not a Company holiday;
+ * - CREATE: omitted address/time/packaging resolve to Employee/Company defaults;
+ * - UPDATE: omitted (or unchanged) fields keep the Order's current selection,
+ *   so an existing valid choice or admin override is never silently reset;
+ * - a changed non-default value requires the matching Employee flag;
+ * - addresses must be active and belong to the Employee's current Company;
+ * - packaging must be active.
+ */
 @Injectable()
 export class OrderValidationService {
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly businessTime: BusinessTimeService,
-  ) {}
+  async resolveDelivery(
+    db: PrismaDb,
+    params: {
+      menu: OrderableMenu;
+      deliveryDate: string;
+      timezone: string;
+      request: DeliveryRequest;
+      existing?: ExistingDelivery;
+    },
+  ): Promise<ResolvedDelivery> {
+    const { menu, deliveryDate, timezone, request, existing } = params;
+    const employee = menu.employee;
+    const company = await this.assertCompanyDeliveryDate(
+      db,
+      employee.companyId,
+      deliveryDate,
+    );
 
-  async validateOrderGraph(
-    employeeId: string,
-    deliveryDateIso: string,
-    lines: OrderLineDto[],
+    const data: DeliveryData = {};
+
+    // Address
+    const addressId = this.chooseValue({
+      requested: request.deliveryAddressId,
+      current: existing?.deliveryAddressId ?? undefined,
+      isUpdate: Boolean(existing),
+      fallback: employee.defaultDeliveryAddressId,
+      allowedNonDefault: employee.canChooseDeliveryAddress,
+      notAllowedMessage:
+        'Employee is not allowed to choose a non-default delivery address.',
+      missingMessage: 'Employee has no default delivery address.',
+    });
+    if (addressId) {
+      const address = await db.companyAddress.findUnique({
+        where: { id: addressId },
+      });
+      if (
+        !address ||
+        address.companyId !== employee.companyId ||
+        !address.isActive
+      ) {
+        throw new ConflictException(
+          'Delivery address must be an active address of the employee’s company.',
+        );
+      }
+      Object.assign(data, {
+        deliveryAddressId: address.id,
+        deliveryAddressLabelSnapshot: address.label,
+        deliveryAddressLine1Snapshot: address.line1,
+        deliveryAddressLine2Snapshot: address.line2,
+        deliveryAddressCitySnapshot: address.city,
+        deliveryAddressRegionSnapshot: address.region,
+        deliveryAddressPostalCodeSnapshot: address.postalCode,
+        deliveryAddressCountrySnapshot: address.country,
+      } satisfies DeliveryData);
+    }
+
+    // Time (business-local HH:mm in the configured timezone)
+    const deliveryTime = this.chooseValue({
+      requested: request.deliveryTime,
+      current: existing
+        ? formatLocalTime(
+            instantToBusinessLocalTime(existing.deliveryAt, timezone),
+          )
+        : undefined,
+      isUpdate: Boolean(existing),
+      fallback: formatLocalTime(
+        localTimeFromDbTime(company.defaultDeliveryTime),
+      ),
+      allowedNonDefault: employee.canChangeDeliveryTime,
+      notAllowedMessage:
+        'Employee is not allowed to choose a non-default delivery time.',
+      missingMessage: 'Company has no default delivery time.',
+    });
+    if (deliveryTime)
+      data.deliveryAt = businessLocalDateTimeToInstant(
+        deliveryDate,
+        deliveryTime,
+        timezone,
+      );
+
+    // Packaging
+    const packagingTypeId = this.chooseValue({
+      requested: request.packagingTypeId,
+      current: existing?.packagingTypeId,
+      isUpdate: Boolean(existing),
+      fallback: company.defaultPackagingTypeId,
+      allowedNonDefault: employee.canChangePackaging,
+      notAllowedMessage:
+        'Employee is not allowed to choose non-default packaging.',
+      missingMessage: 'Company has no default packaging.',
+    });
+    if (packagingTypeId) {
+      const packaging = await db.packagingType.findFirst({
+        where: { id: packagingTypeId, isActive: true },
+      });
+      if (!packaging)
+        throw new ConflictException('Packaging type must be active.');
+      data.packagingTypeId = packaging.id;
+      data.packagingNameSnapshot = packaging.name;
+    }
+
+    return { data, deliveryLeadMinutes: company.deliveryLeadMinutes };
+  }
+
+  /** Company delivery calendar: the date must be a Company working day and not a Company holiday. */
+  async assertCompanyDeliveryDate(
+    db: PrismaDb,
+    companyId: string,
+    deliveryDate: string,
   ) {
-    // 1. Employee & Company
-    const employee = await this.prisma.employee.findUnique({
-      where: { id: employeeId },
+    const company = await db.company.findUniqueOrThrow({
+      where: { id: companyId },
       include: {
-        company: {
-          include: {
-            workingDays: true,
-            holidays: {
-              where: { date: new Date(deliveryDateIso) },
-            },
-          },
-        },
+        workingDays: true,
+        holidays: { where: { date: dbDateFromIsoDate(deliveryDate) } },
       },
     });
-
-    if (!employee) {
-      throw new NotFoundException('Employee not found');
+    const dayOfWeek = ISO_TO_DAY[parseIsoDate(deliveryDate).dayOfWeek]!;
+    if (
+      !company.workingDays.some(
+        (workingDay) => workingDay.dayOfWeek === dayOfWeek,
+      )
+    ) {
+      throw new ConflictException(
+        'Company does not accept deliveries on this day of the week.',
+      );
     }
+    if (company.holidays.length > 0)
+      throw new ConflictException('Delivery date is a company holiday.');
+    return company;
+  }
 
-    const company = employee.company;
-    const companyId = company.id;
-
-    // 2. Delivery Date validation
-    const isOpen = await this.businessTime.isDeliveryDateOpen(deliveryDateIso);
-    if (!isOpen) {
-      throw new ConflictException('Cutoff time for this delivery date has already passed');
+  /**
+   * Returns the value to (re)write, or null to keep the current selection.
+   * Non-default changes require the Employee permission flag.
+   */
+  private chooseValue(input: {
+    requested: string | undefined;
+    current: string | undefined;
+    isUpdate: boolean;
+    fallback: string | null;
+    allowedNonDefault: boolean;
+    notAllowedMessage: string;
+    missingMessage: string;
+  }): string | null {
+    const { requested, current, isUpdate, fallback, allowedNonDefault } = input;
+    if (requested === undefined || (isUpdate && requested === current)) {
+      if (isUpdate) return null;
+      if (!fallback) throw new ConflictException(input.missingMessage);
+      return fallback;
     }
-
-    const plainDate = Temporal.PlainDate.from(deliveryDateIso);
-    const dayOfWeek = ISO_TO_DAY[plainDate.dayOfWeek];
-    if (!dayOfWeek) {
-      throw new BadRequestException('Invalid delivery date format');
-    }
-
-    const isWorkingDay = company.workingDays.some(wd => wd.dayOfWeek === dayOfWeek);
-    if (!isWorkingDay) {
-      throw new ConflictException('Company does not accept deliveries on this day of the week');
-    }
-
-    if (company.holidays.length > 0) {
-      throw new ConflictException('Delivery date is a company holiday');
-    }
-
-    // 3. Address validation
-    if (!employee.defaultDeliveryAddressId) {
-      throw new ConflictException('Employee has no default delivery address');
-    }
-
-    const address = await this.prisma.companyAddress.findUnique({
-      where: { id: employee.defaultDeliveryAddressId },
-    });
-    if (!address || address.companyId !== companyId || !address.isActive) {
-      throw new ConflictException('Invalid delivery address for employee');
-    }
-
-    // 4. Lines, Quantities, Options, and Active Flags
-    if (lines.length === 0) {
-      throw new BadRequestException('Order must contain at least one line');
-    }
-
-    const dishIds = lines.map(l => l.dishId);
-    const dishes = await this.prisma.dish.findMany({
-      where: { id: { in: dishIds } },
-      include: {
-        optionGroups: {
-          include: {
-            options: true,
-            portions: true,
-          },
-        },
-        hiddenByCompanies: {
-          where: { companyId },
-        },
-      },
-    });
-
-    const dishMap = new Map(dishes.map(d => [d.id, d]));
-
-    for (const line of lines) {
-      const dish = dishMap.get(line.dishId);
-      if (!dish) throw new NotFoundException(`Dish ${line.dishId} not found`);
-      if (!dish.isActive) throw new ConflictException(`Dish ${dish.name} is not active`);
-      if (dish.hiddenByCompanies.length > 0) throw new ConflictException(`Dish ${dish.name} is hidden for this company`);
-
-      if (line.combinations.length === 0) {
-        throw new BadRequestException(`Dish ${dish.name} has no combinations specified`);
-      }
-
-      let totalLineQty = 0;
-      for (const combo of line.combinations) {
-        if (combo.quantity < 1) throw new BadRequestException('Combination quantity must be at least 1');
-        totalLineQty += combo.quantity;
-
-        // Validate options
-        const providedOptionGroupIds = new Set(combo.options.map(o => o.optionGroupId));
-        
-        for (const og of dish.optionGroups) {
-          const providedOpts = combo.options.filter(o => o.optionGroupId === og.id);
-          
-          if (og.isRequired && providedOpts.length === 0) {
-            throw new BadRequestException(`Option group '${og.name}' is required for dish '${dish.name}'`);
-          }
-
-          if (providedOpts.length > 1) {
-             throw new BadRequestException(`Multiple options selected for group '${og.name}' (choose exactly one)`);
-          }
-
-          if (providedOpts.length === 1) {
-            const opt = providedOpts[0];
-            const validOption = og.options.find(o => o.optionId === opt.optionId);
-            if (!validOption) {
-              throw new BadRequestException(`Invalid option selected for group '${og.name}'`);
-            }
-
-            if (og.usesPortions) {
-              if (!opt.portionSizeId) {
-                throw new BadRequestException(`Portion size is required for option group '${og.name}'`);
-              }
-              const validPortion = og.portions.find(p => p.portionSizeId === opt.portionSizeId);
-              if (!validPortion) {
-                throw new BadRequestException(`Invalid portion size selected for group '${og.name}'`);
-              }
-            } else {
-              if (opt.portionSizeId) {
-                throw new BadRequestException(`Portion size is not allowed for option group '${og.name}'`);
-              }
-            }
-          }
-        }
-
-        // Ensure no extra option groups were provided
-        const validGroupIds = new Set(dish.optionGroups.map(og => og.id));
-        for (const pg of providedOptionGroupIds) {
-          if (!validGroupIds.has(pg)) {
-            throw new BadRequestException(`Invalid option group '${pg}' provided for dish '${dish.name}'`);
-          }
-        }
-      }
-
-      if (dish.minimumOrderQuantity !== null && totalLineQty < dish.minimumOrderQuantity) {
-        throw new ConflictException(`Dish ${dish.name} has a minimum order quantity of ${dish.minimumOrderQuantity}`);
-      }
-    }
-
-    return { employee, company, address };
+    if (requested !== fallback && !allowedNonDefault)
+      throw new ConflictException(input.notAllowedMessage);
+    return requested;
   }
 }
-

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Temporal } from '@js-temporal/polyfill';
 import { BusinessTimeService } from './business-time.service.js';
 import type { DayOfWeek } from '../generated/prisma/enums.js';
@@ -6,7 +6,13 @@ import type { DayOfWeek } from '../generated/prisma/enums.js';
 // We test computeCutoff() directly — no DB or NestJS required.
 // SettingsService is NOT injected; we call computeCutoff() with inline config.
 
-const MON_TO_FRI: DayOfWeek[] = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY'];
+const MON_TO_FRI: DayOfWeek[] = [
+  'MONDAY',
+  'TUESDAY',
+  'WEDNESDAY',
+  'THURSDAY',
+  'FRIDAY',
+];
 
 function makeService() {
   // Provide a minimal stub for SettingsService; we only call computeCutoff() in tests.
@@ -29,7 +35,7 @@ describe('BusinessTimeService.computeCutoff', () => {
 
   const baseCfg = {
     timezone: TZ,
-    cutoffTime: cutoffTimeDate(10, 30),    // 10:30 kitchen time
+    cutoffTime: cutoffTimeDate(10, 30), // 10:30 kitchen time
     cutoffWorkingDayCount: 2,
     workingDays: MON_TO_FRI,
     holidayDates: [] as Date[],
@@ -92,5 +98,50 @@ describe('BusinessTimeService.computeCutoff', () => {
   it('includes the delivery date in the result', () => {
     const result = service.computeCutoff('2026-10-07', baseCfg);
     expect(result.deliveryDate).toBe('2026-10-07');
+  });
+});
+
+describe('BusinessTimeService.computeCutoff boundaries', () => {
+  const service = makeService();
+  const cfg = {
+    timezone: 'Asia/Kolkata',
+    cutoffTime: cutoffTimeDate(16, 0),
+    cutoffWorkingDayCount: 1,
+    workingDays: MON_TO_FRI,
+    holidayDates: [] as Date[],
+  };
+  const at = (iso: string) =>
+    vi.spyOn(service, 'now').mockReturnValue(Temporal.Instant.from(iso));
+  afterEach(() => vi.restoreAllMocks());
+
+  it('treats now == cutoffAt as passed and one millisecond earlier as open', () => {
+    // Monday 2026-10-05 delivery → cutoff Friday 2026-10-02 16:00 IST = 10:30Z.
+    at('2026-10-02T10:29:59.999Z');
+    expect(service.computeCutoff('2026-10-05', cfg).passed).toBe(false);
+    at('2026-10-02T10:30:00.000Z');
+    const info = service.computeCutoff('2026-10-05', cfg);
+    expect(info).toMatchObject({
+      cutoffDate: '2026-10-02',
+      cutoffInstant: '2026-10-02T10:30:00Z',
+      passed: true,
+    });
+  });
+
+  it('supports a zero working-day cutoff on the delivery date itself', () => {
+    at('2026-10-05T10:30:00.000Z');
+    expect(
+      service.computeCutoff('2026-10-05', { ...cfg, cutoffWorkingDayCount: 0 }),
+    ).toMatchObject({ cutoffDate: '2026-10-05', passed: true });
+    at('2026-10-05T10:29:00.000Z');
+    expect(
+      service.computeCutoff('2026-10-05', { ...cfg, cutoffWorkingDayCount: 0 })
+        .passed,
+    ).toBe(false);
+  });
+
+  it('rejects non YYYY-MM-DD delivery dates', () => {
+    expect(() => service.computeCutoff('2026-10-05T00:00:00Z', cfg)).toThrow(
+      RangeError,
+    );
   });
 });

@@ -1,8 +1,13 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service.js';
 import { BusinessTimeService } from '../../business-time/business-time.service.js';
 import { DispatchQueryDto } from '../dto/dispatch.dto.js';
-import { DeliveryProofService } from '../../driver/services/delivery-proof.service.js';
+import {
+  DeliveryProofService,
+  PROOF_URL_TTL_SECONDS,
+} from '../../driver/services/delivery-proof.service.js';
+import { withOnTime } from '../drop-timing.js';
+import { pageArgs, paginate } from '../../common/dto/pagination-query.dto.js';
 
 @Injectable()
 export class DispatchQueryService {
@@ -16,7 +21,9 @@ export class DispatchQueryService {
     let dateFilter = {};
     if (query.date) {
       // Use BusinessTimeService to get the UTC bounds for this business date
-      const { start, end } = await this.businessTime.getBusinessDateBounds(query.date);
+      const { start, end } = await this.businessTime.getBusinessDateBounds(
+        query.date,
+      );
       dateFilter = {
         scheduledDeliveryAt: {
           gte: start,
@@ -31,17 +38,25 @@ export class DispatchQueryService {
       ...(query.companyId && { companyId: query.companyId }),
     };
 
-    const data = await this.prisma.deliveryDrop.findMany({
-      where,
-      include: {
-        company: { select: { name: true } },
-        driver: { select: { name: true } },
-        _count: { select: { orders: true } },
-      },
-      orderBy: { scheduledDeliveryAt: 'asc' },
-    });
-
-    return { data };
+    const [data, totalItems] = await this.prisma.$transaction([
+      this.prisma.deliveryDrop.findMany({
+        where,
+        include: {
+          company: { select: { name: true } },
+          driver: { select: { name: true } },
+          _count: { select: { orders: true } },
+        },
+        orderBy: [{ scheduledDeliveryAt: 'asc' }, { id: 'asc' }],
+        ...pageArgs(query),
+      }),
+      this.prisma.deliveryDrop.count({ where }),
+    ]);
+    return paginate(
+      data.map(withOnTime),
+      totalItems,
+      query.page,
+      query.pageSize,
+    );
   }
 
   async getProofUrl(id: string) {
@@ -51,9 +66,11 @@ export class DispatchQueryService {
     });
 
     if (!drop) throw new NotFoundException('Delivery drop not found');
-    if (!drop.photoUrl) throw new BadRequestException('No proof photo exists for this delivery');
+    if (!drop.photoUrl)
+      throw new NotFoundException('No proof photo exists for this delivery.');
 
+    // The key always comes from the authorized Drop row, never from the request.
     const url = await this.proofService.generatePresignedUrl(drop.photoUrl);
-    return { url };
+    return { url, expiresInSeconds: PROOF_URL_TTL_SECONDS };
   }
 }
