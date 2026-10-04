@@ -16,7 +16,7 @@ export default function EditCompanyPage() {
       .catch(err => setError(err.message));
   }, [id]);
 
-  if (error) return <div className="p-8 text-red-600">Error: {error}</div>;
+  if (error) return <div className="p-8 text-danger">Error: {error}</div>;
   if (!company) return <div className="p-8">Loading company details...</div>;
 
   return (

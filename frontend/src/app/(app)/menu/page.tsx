@@ -23,7 +23,7 @@ export default function MenuPage() {
   }, []);
 
   if (loading) return <div className="p-8">Loading menu...</div>;
-  if (error) return <div className="p-8 text-red-600">{error}</div>;
+  if (error) return <div className="p-8 text-danger">{error}</div>;
 
   return (
     <main className="p-8 max-w-7xl mx-auto">
@@ -34,13 +34,13 @@ export default function MenuPage() {
       ) : (
         <div className="space-y-4">
           {categories.map((c) => (
-            <div key={c.id} className="p-6 rounded-lg border bg-white shadow-sm">
+            <div key={c.id} className="p-6 rounded-lg border bg-card shadow-sm">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-lg font-semibold">{c.name}</h2>
                 <div className="flex items-center gap-2">
-                  <span className="text-xs bg-stone-100 px-2 py-1 rounded">/{c.slug}</span>
-                  {!c.isActive && <span className="text-xs bg-red-100 text-red-800 px-2 py-1 rounded">Hidden</span>}
-                  {c.isSecret && <span className="text-xs bg-purple-100 text-purple-800 px-2 py-1 rounded">Secret</span>}
+                  <span className="text-xs bg-muted px-2 py-1 rounded">/{c.slug}</span>
+                  {!c.isActive && <span className="text-xs bg-danger-soft text-danger px-2 py-1 rounded">Hidden</span>}
+                  {c.isSecret && <span className="text-xs bg-progress-soft text-progress px-2 py-1 rounded">Secret</span>}
                 </div>
               </div>
               <p className="text-sm text-muted-foreground">

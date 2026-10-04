@@ -1,7 +1,6 @@
 import { Controller, Get } from '@nestjs/common';
 import { RequirePermissions } from '../common/decorators/require-permissions.decorator.js';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
-import type { StaffUser } from '../generated/prisma/client.js';
 
 import { AdminDashboardService } from './services/admin-dashboard.service.js';
 import { KitchenDashboardService } from './services/kitchen-dashboard.service.js';
@@ -43,7 +42,7 @@ export class DashboardController {
 
   @Get('driver')
   @RequirePermissions('driver.own_drops.read')
-  getDriverDashboard(@CurrentUser() user: StaffUser) {
-    return this.driverDashboardService.getDriverDashboard(user.id);
+  getDriverDashboard(@CurrentUser('id') driverId: string) {
+    return this.driverDashboardService.getDriverDashboard(driverId);
   }
 }

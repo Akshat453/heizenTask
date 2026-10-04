@@ -1,11 +1,45 @@
-import { apiRequest } from "./api-client";
+import { apiRequest } from "@/lib/api-client";
+import type {
+  PaginatedResponse,
+  NamedReference,
+  OrderedReference,
+  Dish,
+  Option,
+  MenuCategory,
+  PriceTier,
+  Company,
+  CompanyWriteInput,
+  Employee,
+  EmployeeWriteInput,
+  PlatformSettings,
+  DeliveryDropStatus,
+  DeliveryDrop,
+  DispatchDrop,
+  DriverDrop,
+  Invoice,
+  InvoiceSummary,
+  InvoiceDetail,
+  UninvoicedOrder,
+  AdminDashboardData,
+  KitchenDashboardData,
+  DispatchDashboardData,
+  DriverDashboardData,
+  KitchenBoardUnit,
+  OrderListItem,
+  OrderListQuery,
+  CutoffInfo,
+  CutoffSummary,
+  OrderDetail,
+  CreateOrderInput,
+  UpdateOrderInput,
+  OverrideDeliveryInput,
+  MenuPreview,
+  CompanyDetail,
+} from "./types";
+
+export * from "./types";
 
 // ─── Shared ────────────────────────────────────────────────────────────────────
-
-export type PaginatedResponse<T> = {
-  data: T[];
-  pagination: { page: number; pageSize: number; totalItems: number; totalPages: number };
-};
 
 /** Selector/table helper for paginated management lists: one page of the maximum size (100). */
 async function listAll<T>(path: string): Promise<T[]> {
@@ -14,9 +48,6 @@ async function listAll<T>(path: string): Promise<T[]> {
 }
 
 // ─── Reference Data ─────────────────────────────────────────────────────────
-
-export type NamedReference = { id: string; name: string; isActive: boolean };
-export type OrderedReference = NamedReference & { displayOrder: number };
 
 export const referenceDataApi = {
   allergens: () => listAll<NamedReference>("/allergens"),
@@ -49,27 +80,6 @@ export const referenceDataApi = {
 
 // ─── Catalogue ──────────────────────────────────────────────────────────────
 
-export type Dish = {
-  id: string; name: string; description: string; imageUrl: string; sku: string;
-  temperature: "HOT" | "COLD"; costCents: number; isActive: boolean;
-  minimumOrderQuantity: number | null; station: OrderedReference | null;
-  allergens: { allergen: NamedReference }[];
-  dietaryTags: { dietaryTag: NamedReference }[];
-  optionGroups: OptionGroup[];
-};
-
-export type OptionGroup = {
-  id: string; name: string; isRequired: boolean; usesPortions: boolean; displayOrder: number;
-  options: { optionId: string; displayOrder: number; option: Option }[];
-  portions: { portionSizeId: string; extraChargeCents: number; displayOrder: number; portionSize: OrderedReference }[];
-};
-
-export type Option = {
-  id: string; name: string; costCents: number; isActive: boolean;
-  allergens: { allergen: NamedReference }[];
-  dietaryTags: { dietaryTag: NamedReference }[];
-};
-
 export const catalogueApi = {
   listDishes: (params?: Record<string, string | number | boolean>) => {
     const qs = new URLSearchParams();
@@ -82,13 +92,6 @@ export const catalogueApi = {
 };
 
 // ─── Menu ───────────────────────────────────────────────────────────────────
-
-export type MenuCategory = {
-  id: string; name: string; slug: string; displayOrder: number;
-  isActive: boolean; isSecret: boolean;
-  items: { dishId: string; displayOrder: number; dish: Pick<Dish, "id" | "name" | "sku" | "isActive"> }[];
-  _count?: { items: number };
-};
 
 export const menuApi = {
   listCategories: () => listAll<MenuCategory>("/menu/categories"),
@@ -103,11 +106,6 @@ export const menuApi = {
 
 // ─── Pricing ────────────────────────────────────────────────────────────────
 
-export type PriceTier = {
-  id: string; name: string; strategy: string; isActive: boolean; isDefault: boolean;
-  sourceTierId: string | null; costMultiplierBps: number | null; sourceAdjustmentBps: number | null;
-};
-
 export const pricingApi = {
   listTiers: () => apiRequest<(PriceTier & { _count: { companies: number } })[]>("/price-tiers"),
   getTierEditor: (id: string) => apiRequest<{
@@ -119,41 +117,6 @@ export const pricingApi = {
 
 // ─── Companies ──────────────────────────────────────────────────────────────
 
-export type DayOfWeek = "MONDAY" | "TUESDAY" | "WEDNESDAY" | "THURSDAY" | "FRIDAY" | "SATURDAY" | "SUNDAY";
-
-export type CompanyAddress = {
-  id: string; label: string; line1: string; line2: string | null; city: string; region: string | null;
-  postalCode: string | null; country: string; isActive: boolean;
-};
-
-export type Company = {
-  id: string; name: string;
-  billingContactName: string; billingContactEmail: string; billingContactPhone: string | null;
-  /** Postgres TIME serialized as 1970-01-01T<HH:mm>:00.000Z (business-local wall clock). */
-  defaultDeliveryTime: string;
-  deliveryLeadMinutes: number;
-  defaultPackagingTypeId: string;
-  driverInstructions: string | null;
-  ownerEmployee: { id: string; name: string; email: string | null } | null;
-  priceTier: PriceTier | null;
-  domains: { domain: string }[];
-  addresses: CompanyAddress[];
-  workingDays?: { dayOfWeek: DayOfWeek }[];
-  _count?: { employees: number };
-};
-
-/** Write payload for POST/PATCH /companies (validated server-side). */
-export type CompanyWriteInput = {
-  name: string; billingContactName: string; billingContactEmail: string; billingContactPhone?: string;
-  defaultDeliveryTime: string; deliveryLeadMinutes: number; defaultPackagingTypeId: string;
-  workingDays: string[]; domains: string[];
-  addresses: Array<{ id?: string; label: string; line1: string; line2?: string; city: string; region?: string; postalCode?: string; country: string; isActive?: boolean }>;
-  owner?: { name: string; email?: string; canChooseDeliveryAddress: boolean; canChangeDeliveryTime: boolean; canChangePackaging: boolean; allergenIds: string[]; dietaryTagIds: string[] };
-  holidays?: Array<{ date: string; name?: string }>;
-  hiddenCategoryIds?: string[];
-  hiddenDishIds?: string[];
-};
-
 export const companiesApi = {
   list: (params?: { page?: number; pageSize?: number; search?: string }) => {
     const qs = new URLSearchParams();
@@ -162,29 +125,12 @@ export const companiesApi = {
     if (params?.search) qs.set("search", params.search);
     return apiRequest<PaginatedResponse<Company>>(`/companies?${qs}`);
   },
-  get: (id: string) => apiRequest<Company>(`/companies/${id}`),
+  get: (id: string) => apiRequest<CompanyDetail>(`/companies/${id}`),
   create: (body: CompanyWriteInput) => apiRequest<Company>("/companies", { method: "POST", body: JSON.stringify(body) }),
   update: (id: string, body: Partial<CompanyWriteInput>) => apiRequest<Company>(`/companies/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
 };
 
 // ─── Employees ──────────────────────────────────────────────────────────────
-
-export type Employee = {
-  id: string; name: string; email: string | null;
-  company: { id: string; name: string };
-  canChooseDeliveryAddress: boolean; canChangeDeliveryTime: boolean; canChangePackaging: boolean;
-  defaultDeliveryAddress: { id: string; label: string } | null;
-  allergens: { allergen: NamedReference }[];
-  dietaryTags: { dietaryTag: NamedReference }[];
-  ownedCompany: { id: string; name: string } | null;
-};
-
-/** Write payload for employee create/update (validated server-side). */
-export type EmployeeWriteInput = {
-  name: string; email?: string | null; defaultDeliveryAddressId?: string | null;
-  canChooseDeliveryAddress?: boolean; canChangeDeliveryTime?: boolean; canChangePackaging?: boolean;
-  allergenIds?: string[]; dietaryTagIds?: string[];
-};
 
 export const employeesApi = {
   list: (params?: { page?: number; pageSize?: number; search?: string; companyId?: string }) => {
@@ -198,25 +144,10 @@ export const employeesApi = {
   get: (id: string) => apiRequest<Employee>(`/employees/${id}`),
   create: (companyId: string, body: EmployeeWriteInput) => apiRequest<Employee>(`/companies/${companyId}/employees`, { method: "POST", body: JSON.stringify(body) }),
   update: (id: string, body: Partial<EmployeeWriteInput>) => apiRequest<Employee>(`/employees/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
-  menuPreview: (id: string) => apiRequest<{
-    employee: { id: string; name: string; companyId: string }; tierId: string;
-    categories: {
-      id: string; name: string; slug: string; dishes: {
-        id: string; name: string; resolvedPriceCents: number; priceSource: string;
-        allergens: { allergen: NamedReference }[]; dietaryTags: { dietaryTag: NamedReference }[];
-        optionGroups: { id: string; name: string; isRequired: boolean; options: { id: string; name: string; resolvedPriceCents: number }[] }[];
-        preferenceContext: { allergenWarnings: NamedReference[]; matchingDietaryTags: NamedReference[] };
-      }[];
-    }[];
-  }>(`/employees/${id}/menu-preview`),
+  menuPreview: (id: string) => apiRequest<MenuPreview>(`/employees/${id}/menu-preview`),
 };
 
 // ─── Settings ───────────────────────────────────────────────────────────────
-
-export type PlatformSettings = {
-  id: number; businessTimezone: string; cutoffTime: string;
-  cutoffWorkingDayCount: number; kitchenReadyBufferMinutes: number; atRiskWindowMinutes: number;
-};
 
 export const settingsApi = {
   get: () => apiRequest<{
@@ -236,33 +167,11 @@ export const settingsApi = {
 
 // ─── Delivery Drops (Dispatch & Driver) ─────────────────────────────────────
 
-/** Backend enum values; display with DROP_STATUS_LABEL (e.g. "Out for Delivery"). */
-export type DeliveryDropStatus = "DISPATCH_READY" | "OUT_FOR_DELIVERY" | "DELIVERED";
-
 export const DROP_STATUS_LABEL: Record<DeliveryDropStatus, string> = {
   DISPATCH_READY: "Dispatch Ready",
   OUT_FOR_DELIVERY: "Out for Delivery",
   DELIVERED: "Delivered",
 };
-
-export type DeliveryDrop = {
-  id: string; companyId: string; status: DeliveryDropStatus;
-  scheduledDeliveryAt: string;
-  addressLabelSnapshot: string; addressLine1Snapshot: string; addressLine2Snapshot: string | null;
-  addressCitySnapshot: string; addressRegionSnapshot: string | null; addressPostalCodeSnapshot: string | null;
-  addressCountrySnapshot: string;
-  driverStaffUserId: string | null;
-  dispatchReadyAt: string | null; outForDeliveryAt: string | null; deliveredAt: string | null;
-  deliveryNote: string | null;
-  /** Private storage key of the proof photo (view via the proof-url endpoint). */
-  photoUrl: string | null;
-  /** null before delivery; deliveredAt <= scheduledDeliveryAt afterwards. */
-  onTime: boolean | null;
-  _count: { orders: number };
-};
-
-export type DispatchDrop = DeliveryDrop & { company: { name: string }; driver: { name: string } | null };
-export type DriverDrop = DeliveryDrop & { company: { name: string; driverInstructions: string | null } };
 
 export const dispatchApi = {
   list: (date: string) => apiRequest<PaginatedResponse<DispatchDrop>>(`/dispatch/drops?date=${encodeURIComponent(date)}&pageSize=100`),
@@ -286,27 +195,6 @@ export const driverApi = {
 
 // ─── Billing ────────────────────────────────────────────────────────────────
 
-export type InvoiceStatus = "UNPAID" | "PAID";
-export type OrderStatus = "DRAFT" | "PLACED" | "CONFIRMED" | "CANCELLED" | "REJECTED" | "DELIVERED";
-
-export type Invoice = {
-  id: string; invoiceNumber: string; companyId: string; status: InvoiceStatus;
-  totalCents: number; createdAt: string; paidAt: string | null;
-};
-export type InvoiceSummary = Invoice & { company: { name: string }; _count: { orders: number } };
-export type InvoiceDetail = Invoice & {
-  company: { name: string; billingContactName: string; billingContactEmail: string };
-  orders: {
-    invoiceId: string; orderId: string; amountCents: number;
-    order: { orderNumber: string; status: OrderStatus; deliveryDate: string; employee: { name: string } };
-  }[];
-};
-export type UninvoicedOrder = {
-  id: string; orderNumber: string; status: OrderStatus; deliveryDate: string; deliveryAt: string;
-  billableTotalCents: number; confirmedAt: string | null; cancelledAt: string | null;
-  employee: { name: string; email: string | null };
-};
-
 export const billingApi = {
   listInvoices: () => apiRequest<PaginatedResponse<InvoiceSummary>>("/invoices?pageSize=100"),
   getInvoice: async (id: string) => (await apiRequest<{ data: InvoiceDetail }>(`/invoices/${id}`)).data,
@@ -319,24 +207,48 @@ export const billingApi = {
 
 // ─── Dashboards (backend-authoritative metrics) ─────────────────────────────
 
-type DashboardEnvelope<M> = { businessDate: string; metrics: M };
-export type AdminDashboardData = DashboardEnvelope<{
-  todayOrders: number; todayBillableCents: number; uninvoicedCents: number;
-  lateKitchenOrders: number; latePrepUnits: number; activeDeliveries: number;
-}>;
-export type KitchenDashboardData = DashboardEnvelope<{
-  notStarted: number; started: number; atRisk: number; late: number;
-  nextDeadline: { plannedKitchenReadyAt: string; orderId: string; orderNumber: string; companyName: string; remainingUnits: number } | null;
-}>;
-export type DispatchDashboardData = DashboardEnvelope<{ dispatchReady: number; unassigned: number; outForDelivery: number; lateDeliveries: number }>;
-export type DriverDashboardData = DashboardEnvelope<{
-  todayDrops: number; remaining: number; delivered: number;
-  nextDrop: { id: string; scheduledDeliveryAt: string; companyName: string; addressCitySnapshot: string; status: DeliveryDropStatus } | null;
-}>;
-
 export const dashboardApi = {
   admin: () => apiRequest<AdminDashboardData>("/dashboard/admin"),
   kitchen: () => apiRequest<KitchenDashboardData>("/dashboard/kitchen"),
   dispatch: () => apiRequest<DispatchDashboardData>("/dashboard/dispatch"),
   driver: () => apiRequest<DriverDashboardData>("/dashboard/driver"),
+};
+
+// ─── Kitchen / orders / business time ────────────────────────────────────────
+
+function toQuery(params: Record<string, string | number | boolean | undefined>): string {
+  const qs = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) if (value !== undefined && value !== "") qs.set(key, String(value));
+  return qs.toString();
+}
+
+export const kitchenApi = {
+  board: (date: string, stationId?: string) =>
+    apiRequest<KitchenBoardUnit[]>(`/kitchen?${toQuery({ date, stationId })}`),
+};
+
+export const ordersApi = {
+  list: (query: OrderListQuery = {}) => apiRequest<PaginatedResponse<OrderListItem>>(`/orders?${toQuery(query)}`),
+  get: (id: string) => apiRequest<OrderDetail>(`/orders/${id}`),
+  create: (body: CreateOrderInput) => apiRequest<OrderDetail>("/orders", { method: "POST", body: JSON.stringify(body) }),
+  update: (id: string, body: UpdateOrderInput) =>
+    apiRequest<OrderDetail>(`/orders/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  place: (id: string) => apiRequest<OrderDetail>(`/orders/${id}/place`, { method: "POST" }),
+  cancel: (id: string) => apiRequest<OrderDetail>(`/orders/${id}/cancel`, { method: "POST" }),
+  reject: (id: string, rejectionReason: string) =>
+    apiRequest<OrderDetail>(`/orders/${id}/reject`, { method: "POST", body: JSON.stringify({ rejectionReason }) }),
+  overrideDelivery: (id: string, body: OverrideDeliveryInput) =>
+    apiRequest<OrderDetail>(`/orders/${id}/delivery-details`, { method: "PATCH", body: JSON.stringify(body) }),
+  forceComplete: (id: string) => apiRequest<unknown>(`/kitchen/orders/${id}/force-complete`, { method: "POST" }),
+  /** Processes every order whose cut-off has passed (or one delivery date). Idempotent. */
+  processCutoff: (deliveryDate?: string) =>
+    apiRequest<CutoffSummary>("/orders/cutoff/process", {
+      method: "POST",
+      body: JSON.stringify(deliveryDate ? { deliveryDate } : {}),
+    }),
+};
+
+export const businessTimeApi = {
+  now: () => apiRequest<{ businessDate: string; timezone: string; serverNow: string }>("/business-time/now"),
+  cutoff: (deliveryDate: string) => apiRequest<CutoffInfo>(`/business-time/cutoff/${deliveryDate}`),
 };

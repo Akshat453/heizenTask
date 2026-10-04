@@ -1,117 +1,119 @@
-'use client';
+"use client";
 
-import { useEffect, useState } from 'react';
-import { describeError } from '@/lib/api-client';
-import { dashboardApi, type DriverDashboardData } from '@/lib/api';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Skeleton } from '@/components/ui/skeleton';
-import { Truck, MapPin, CheckCircle2, Clock } from 'lucide-react';
-import { format, parseISO } from 'date-fns';
-import { Badge } from '@/components/ui/badge';
+import { useQuery } from "@tanstack/react-query";
+import { MapPin, Route, Truck } from "lucide-react";
+import Link from "next/link";
+import { EmptyState } from "@/components/app/empty-state";
+import { ErrorState } from "@/components/app/error-state";
+import { StatusBadge } from "@/components/app/status-badge";
+import { Button } from "@/components/ui/button";
+import { Progress } from "@/components/ui/progress";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useBusinessClock } from "@/hooks/use-business-clock";
+import { driverApi } from "@/lib/api";
+import { DEFINITIONS } from "@/lib/dashboard-definitions";
+import { formatBusinessTime, formatCount, formatRelative } from "@/lib/format";
+import { DashboardHeader } from "./dashboard-header";
+import { DashboardPage } from "./dashboard-layout";
+import { DASHBOARD_REFRESH_MS, dashboardKeys, useDriverDashboard } from "./queries";
 
+const D = DEFINITIONS.driver;
+
+/** Phone-first: progress, then the next stop as a hero card. */
 export function DriverDashboard() {
-  const [data, setData] = useState<DriverDashboardData | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    // The API returns { businessDate, metrics } directly (no `data` envelope).
-    dashboardApi
-      .driver()
-      .then(setData)
-      .catch((err: unknown) => setError(describeError(err, 'Failed to load dashboard')));
-  }, []);
-
-  if (error) {
-    return <div className="p-8 text-destructive">{error}</div>;
-  }
+  const { timeZone, nowMs } = useBusinessClock();
+  const dashboard = useDriverDashboard();
+  const route = useQuery({
+    queryKey: [...dashboardKeys.all, "driver-route"],
+    queryFn: driverApi.today,
+    refetchInterval: DASHBOARD_REFRESH_MS,
+  });
+  const m = dashboard.data?.metrics;
+  const next = m?.nextDrop ? route.data?.data.find((drop) => drop.id === m.nextDrop?.id) : undefined;
+  const onTime = route.data?.data.filter((drop) => drop.onTime === true).length;
 
   return (
-    <div className="space-y-6 p-8 max-w-7xl mx-auto">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Driver Dashboard</h1>
-        <p className="text-muted-foreground mt-2">
-          {data ? `Overview for business date: ${data.businessDate}` : 'Loading...'}
-        </p>
-      </div>
+    <DashboardPage>
+      <div className="mx-auto flex w-full max-w-md flex-col gap-4">
+        <DashboardHeader
+          businessDate={dashboard.data?.businessDate}
+          updatedAt={dashboard.dataUpdatedAt}
+          onRefresh={() => {
+            void dashboard.refetch();
+            void route.refetch();
+          }}
+          refreshing={dashboard.isFetching}
+        />
 
-      <div className="grid gap-4 md:grid-cols-3">
-        {/* Today's Drops */}
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Today&apos;s Route</CardTitle>
-            <MapPin className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {!data ? <Skeleton className="h-8 w-16" /> : data.metrics.todayDrops}
-            </div>
-            <p className="text-xs text-muted-foreground mt-1">Total assigned drops</p>
-          </CardContent>
-        </Card>
-
-        {/* Remaining */}
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Remaining Drops</CardTitle>
-            <Truck className="h-4 w-4 text-blue-600" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {!data ? <Skeleton className="h-8 w-16" /> : data.metrics.remaining}
-            </div>
-            <p className="text-xs text-muted-foreground mt-1">Not yet delivered</p>
-          </CardContent>
-        </Card>
-
-        {/* Delivered */}
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Completed</CardTitle>
-            <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {!data ? <Skeleton className="h-8 w-16" /> : data.metrics.delivered}
-            </div>
-            <p className="text-xs text-muted-foreground mt-1">Delivered today</p>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Next Drop */}
-      <Card className="max-w-xl">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Clock className="h-5 w-5" />
-            Next Drop
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {!data ? (
-            <div className="space-y-2">
-              <Skeleton className="h-6 w-48" />
-              <Skeleton className="h-4 w-64" />
-            </div>
-          ) : data.metrics.nextDrop ? (
-            <div>
-              <div className="flex items-center gap-3 mb-2">
-                <span className="text-xl font-medium">
-                  {format(parseISO(data.metrics.nextDrop.scheduledDeliveryAt), 'h:mm a')}
+        {dashboard.isLoading ? (
+          <>
+            <Skeleton className="h-28 w-full" />
+            <Skeleton className="h-56 w-full" />
+          </>
+        ) : dashboard.error ? (
+          <ErrorState error={dashboard.error} title="Could not load your deliveries" onRetry={() => dashboard.refetch()} />
+        ) : !m || m.todayDrops === 0 ? (
+          <div className="rounded-lg border bg-card">
+            <EmptyState icon={Truck} title="No deliveries assigned for today." description="Dispatch assigns drops as orders become ready. This page refreshes every minute." />
+          </div>
+        ) : (
+          <>
+            <section className="rounded-lg border bg-card p-4" aria-label="Today's progress">
+              <div className="flex items-baseline justify-between gap-2">
+                <Tooltip>
+                  <TooltipTrigger render={<p />} className="text-lg font-semibold">
+                    <span className="num">{formatCount(m.delivered)}</span> of <span className="num">{formatCount(m.todayDrops)}</span> delivered
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-xs text-xs">{`${D.todayDrops} ${D.delivered}`}</TooltipContent>
+                </Tooltip>
+                <span className="text-sm text-muted-foreground">
+                  <span className="num">{formatCount(m.remaining)}</span> to go
                 </span>
-                <Badge variant={data.metrics.nextDrop.status === 'OUT_FOR_DELIVERY' ? 'default' : 'secondary'}>
-                  {data.metrics.nextDrop.status === 'OUT_FOR_DELIVERY' ? 'Out for Delivery' : 'Dispatch Ready'}
-                </Badge>
               </div>
-              <p className="text-muted-foreground">
-                {data.metrics.nextDrop.companyName}
-                {data.metrics.nextDrop.addressCitySnapshot && ` • ${data.metrics.nextDrop.addressCitySnapshot}`}
-              </p>
-            </div>
-          ) : (
-            <p className="text-muted-foreground">No upcoming drops scheduled for today.</p>
-          )}
-        </CardContent>
-      </Card>
-    </div>
+              <Progress value={(m.delivered / m.todayDrops) * 100} className="mt-3" aria-label="Delivered today" />
+              {onTime !== undefined && m.delivered > 0 && (
+                <p className="mt-2 text-xs text-muted-foreground">
+                  <span className="num">{formatCount(onTime)}</span> of {formatCount(m.delivered)} delivered on time
+                </p>
+              )}
+            </section>
+
+            {m.nextDrop ? (
+              <section className="flex flex-col gap-4 rounded-lg border bg-card p-4" aria-label="Next stop">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <p className="label-caps text-muted-foreground">Next stop</p>
+                    <p className="num mt-1 text-4xl font-semibold tracking-tight">{formatBusinessTime(m.nextDrop.scheduledDeliveryAt, timeZone)}</p>
+                    <p className="num text-sm text-muted-foreground">{formatRelative(m.nextDrop.scheduledDeliveryAt, nowMs)}</p>
+                  </div>
+                  <StatusBadge kind="drop" value={m.nextDrop.status} />
+                </div>
+                <div>
+                  <p className="text-base font-semibold">{m.nextDrop.companyName}</p>
+                  <p className="mt-1 flex gap-1.5 text-sm text-muted-foreground">
+                    <MapPin aria-hidden className="mt-0.5 size-4 shrink-0" />
+                    {next
+                      ? [next.addressLabelSnapshot, next.addressLine1Snapshot, next.addressLine2Snapshot, next.addressCitySnapshot].filter(Boolean).join(", ")
+                      : m.nextDrop.addressCitySnapshot}
+                  </p>
+                  {next?.company.driverInstructions && (
+                    <p className="mt-2 line-clamp-2 rounded-md bg-muted px-3 py-2 text-sm">{next.company.driverInstructions}</p>
+                  )}
+                </div>
+                <Button size="lg" className="h-14 w-full text-base" render={<Link href="/driver" />} nativeButton={false}>
+                  <Route data-icon="inline-start" />
+                  Go to my route
+                </Button>
+              </section>
+            ) : (
+              <div className="rounded-lg border bg-card">
+                <EmptyState icon={Truck} title="All of today's drops are delivered" description="Nice work. New assignments will show up here." />
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </DashboardPage>
   );
 }

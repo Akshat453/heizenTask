@@ -26,7 +26,7 @@ export default function CompaniesPage() {
   }, []);
 
   if (loading) return <div className="p-8">Loading companies...</div>;
-  if (error) return <div className="p-8 text-red-600">{error}</div>;
+  if (error) return <div className="p-8 text-danger">{error}</div>;
 
   return (
     <main className="p-8 max-w-7xl mx-auto">
@@ -40,9 +40,9 @@ export default function CompaniesPage() {
       {companies.length === 0 ? (
         <p className="text-muted-foreground">No companies found.</p>
       ) : (
-        <div className="overflow-x-auto rounded-lg border bg-white">
+        <div className="overflow-x-auto rounded-lg border bg-card">
           <table className="w-full text-sm text-left">
-            <thead className="bg-stone-50 border-b">
+            <thead className="bg-background border-b">
               <tr>
                 <th className="px-6 py-3 font-medium">Name</th>
                 <th className="px-6 py-3 font-medium">Owner</th>
@@ -53,7 +53,7 @@ export default function CompaniesPage() {
             </thead>
             <tbody className="divide-y">
               {companies.map((c) => (
-                <tr key={c.id} className="hover:bg-stone-50">
+                <tr key={c.id} className="hover:bg-muted">
                   <td className="px-6 py-4 font-medium">{c.name}</td>
                   <td className="px-6 py-4">{c.ownerEmployee?.name || "None"}</td>
                   <td className="px-6 py-4">

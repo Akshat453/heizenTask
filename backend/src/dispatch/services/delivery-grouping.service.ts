@@ -7,7 +7,9 @@ import {
 } from '../../generated/prisma/enums.js';
 import { Prisma } from '../../generated/prisma/client.js';
 
-export const DRIVER_DELIVER_PERMISSION = 'driver.own_drops.deliver';
+import { DRIVER_DELIVER_PERMISSION } from '../../common/permission-keys.js';
+
+export { DRIVER_DELIVER_PERMISSION };
 
 /** Fields that define an Order's grouping key and a Drop's address snapshot. */
 export const groupingOrderSelect = {

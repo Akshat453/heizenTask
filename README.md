@@ -192,6 +192,12 @@ A required option group with no usable choice makes the Dish unorderable. Secret
   - The server generates the private S3 key, which is stored in `DeliveryDrop.photoUrl`, and uploads before the database transition. If the transition fails, the object is deleted best-effort.
   - `GET /dispatch/drops/:id/proof-url` (requires `dispatch.read`) returns a 5-minute signed URL for the key stored on that Drop.
 
+### Staff and business clock
+
+- **Staff accounts** (`staff.manage`): `GET /staff` (paginated, search by name or email), `GET /roles`, `POST /staff` and `PATCH /staff/:id`. Emails are unique regardless of letter case. Passwords follow the reviewer-account strength: 8-72 characters with upper and lower case, a digit and a symbol. They are stored as bcrypt hashes and never returned. Deactivated staff cannot sign in, and any existing session stops working on its next request. Admins cannot deactivate themselves or move themselves to a role without `staff.manage` (409).
+- **Driver list** (`dispatch.assign_driver`): `GET /staff/drivers` returns active staff whose role grants `driver.own_drops.deliver`, chosen by permission and never by role name.
+- **Business clock** (any signed-in user): `GET /business-time/now` returns `{ businessDate, timezone, serverNow }` and no other settings.
+
 ### Billing
 
 - **Billable** means `billableTotalCents != null`, not the current status. Confirmed-then-cancelled orders are billable; orders cancelled before confirmation are not.
@@ -205,21 +211,40 @@ A required option group with no usable choice makes the Dish unorderable. Secret
 
 ### Dashboards
 
-All metrics are computed by the backend for the current business date.
+All metrics are computed by the backend; the frontend only formats them. Orders are grouped by **delivery date**; Drops by whether their scheduled delivery time falls on the **business date**. Missing counts are `0`; a missing "next" item is `null`. The tile tooltips use this exact wording (`frontend/src/lib/dashboard-definitions.ts`).
 
 | Dashboard | Metric | Definition |
 |---|---|---|
-| Admin | Today's orders | Orders for today, excluding CANCELLED and REJECTED. |
-| Admin | Today's billable | Sum of `billableTotalCents` for today's orders (includes confirmed-then-cancelled). |
-| Admin | Uninvoiced | Sum of billable amounts not yet invoiced (all dates). |
-| Admin | Late Kitchen work | CONFIRMED, not-ready orders whose planned Kitchen-ready time has passed. |
-| Admin | Active deliveries | Today's Drops that are DISPATCH_READY or OUT_FOR_DELIVERY. |
-| Kitchen | Unit counts | Today's not-started, started, at-risk and late units. |
-| Kitchen | Next deadline | The next planned Kitchen-ready time. |
-| Dispatch | Drop counts | Today's dispatch-ready, unassigned, out-for-delivery, and overdue undelivered Drops. |
-| Driver | Own Drops | The signed-in driver's Drops today, remaining, delivered, and next Drop. |
+| Admin | Today's orders | Orders whose delivery date is today's business date, in any status except Cancelled and Rejected (drafts and placed orders count). Grouped by delivery date, not by when the order was made. |
+| Admin | Today's billable | Sum of the billable amount frozen at cut-off confirmation for orders delivering today. Includes orders cancelled after confirmation. Drafts and placed orders have no billable amount yet and add nothing. 0 when there are none. |
+| Admin | Uninvoiced | Sum of billable amounts on orders that are not on any invoice yet, across all delivery dates. Includes confirmed-then-cancelled orders; orders cancelled before cut-off are never billable. |
+| Admin | Late kitchen work | Confirmed orders on any delivery date that are not kitchen-ready, still have unfinished prep units, and whose planned kitchen-ready time (delivery time − company lead minutes − kitchen buffer) has passed. Sub-line: their unfinished prep units. Cancelled orders are excluded. |
+| Admin | Active deliveries | Drops scheduled for today's business date that are Ready to leave or Out for delivery. Delivered drops are excluded. |
+| Admin | Meals today | Sum of line quantities (one meal per boxed portion) on orders delivering today that are Confirmed or Delivered. Orders cancelled after confirmation stay in billable value but are not cooked, so they are not meals; drafts, placed and rejected orders are excluded. |
+| Admin | Delivered today | Today's drops (by scheduled delivery time) that are delivered, and how many were on time (`deliveredAt <= scheduledDeliveryAt`). Undelivered drops are not counted. |
+| Admin | Placed awaiting cut-off | Placed orders with a delivery date of today or later: count and sum of their current `totalCents` (not frozen until cut-off). Drafts are excluded. |
+| Admin | Oldest uninvoiced | Earliest delivery date among billable orders not on any invoice (same set as Uninvoiced); `null` when there are none. |
+| Admin | Deliveries by date | For each delivery date from today−3 to today+7: Confirmed and Delivered orders and their meals. Dates with none are returned as 0. |
+| Admin | Status mix this week | Order count per status (all six) for delivery dates in the current business week, Monday to Sunday. |
+| Admin | Top companies this week | Top 5 companies by meals for delivery dates in the current business week (Confirmed and Delivered orders), with their order counts; ties by name. |
+| Kitchen | Not started | Prep units of confirmed orders delivering today that have no start time. Units of orders cancelled after confirmation are excluded. |
+| Kitchen | In progress | Prep units of confirmed orders delivering today that have a start time but no done time. |
+| Kitchen | At risk | Unfinished prep units of confirmed orders delivering today whose planned kitchen-ready time is less than the at-risk window away but has not passed yet. |
+| Kitchen | Late now | Unfinished prep units of confirmed orders delivering today whose planned kitchen-ready time has passed. Exactly at the deadline counts as late. |
+| Kitchen | Next deadline | The earliest planned kitchen-ready time among today's unfinished prep units, with that order's remaining unit count. Empty when everything is done. |
+| Kitchen | Prep units today / done | All prep units on Confirmed or Delivered orders delivering today, and how many are done. Delivered orders keep their finished units in the total; orders cancelled after confirmation are removed because the kitchen no longer cooks them. |
+| Dispatch | Ready to leave | Drops scheduled for today's business date that are Ready to leave, with or without a driver. |
+| Dispatch | Unassigned | Today's Ready-to-leave drops with no driver assigned. |
+| Dispatch | Out for delivery | Today's drops that are Out for delivery. |
+| Dispatch | Running late | Today's drops whose scheduled delivery time has passed and that are not delivered yet (ready or out for delivery). Drops already delivered late are not counted. |
+| Dispatch | Drops today | Drops whose scheduled delivery time falls on today's business date, in any status. |
+| Dispatch | Waiting on kitchen | Confirmed orders delivering today that are not kitchen-ready yet, so they have no drop. Cancelled orders are excluded. |
+| Dispatch | Delivered today | Same as the admin figure: today's delivered drops and how many were on time. |
+| Driver | Today / delivered / remaining | Drops assigned to you and scheduled for today's business date, in any status / that are delivered / that are not delivered yet. |
+| Driver | Next stop | Your earliest drop today that is not delivered yet. |
+| Driver | On time / late | Among your delivered drops today: on time when `deliveredAt <= scheduledDeliveryAt`, otherwise late. |
 
-Missing counts are `0`; a missing "next" item is `null`.
+Supporting panels list rows from operational endpoints rather than new figures. The kitchen station-load and prep-totals panels group today's kitchen-board rows; the dispatch unassigned, departures and driver-load panels group today's drops; the admin "Needs attention" list links each item to where it is fixed. `GET /dispatch/drops` also returns `plannedDispatchReadyAt` per drop: scheduled delivery time minus the longest delivery lead snapshotted on its orders (computed, not stored).
 
 ## API conventions
 

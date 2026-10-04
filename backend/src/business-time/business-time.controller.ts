@@ -7,6 +7,12 @@ import { BusinessTimeService } from './business-time.service.js';
 export class BusinessTimeController {
   constructor(private readonly service: BusinessTimeService) {}
 
+  /** GET /business-time/now — any signed-in staff member; exposes only date, timezone and server time. */
+  @Get('now')
+  getNow() {
+    return this.service.getClock();
+  }
+
   /** GET /business-time/cutoff/:date — get cutoff info for a delivery date (YYYY-MM-DD) */
   @Get('cutoff/:date')
   @RequirePermissions('settings.read')

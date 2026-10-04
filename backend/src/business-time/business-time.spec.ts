@@ -145,3 +145,31 @@ describe('BusinessTimeService.computeCutoff boundaries', () => {
     );
   });
 });
+
+describe('BusinessTimeService.getClock', () => {
+  const serviceIn = (timezone: string) =>
+    new BusinessTimeService({
+      loadForBusinessTime: vi.fn().mockResolvedValue({ timezone }),
+    } as never);
+
+  it('returns the business date in the configured timezone with the server instant', async () => {
+    const service = serviceIn('Asia/Kolkata');
+    // 20:00 UTC on 4 Oct is 01:30 on 5 Oct in Kolkata.
+    vi.spyOn(service, 'now').mockReturnValue(
+      Temporal.Instant.from('2026-10-04T20:00:00Z'),
+    );
+    await expect(service.getClock()).resolves.toEqual({
+      businessDate: '2026-10-05',
+      timezone: 'Asia/Kolkata',
+      serverNow: '2026-10-04T20:00:00.000Z',
+    });
+  });
+
+  it('follows a negative-offset timezone', async () => {
+    const service = serviceIn('America/New_York');
+    vi.spyOn(service, 'now').mockReturnValue(
+      Temporal.Instant.from('2026-10-05T02:00:00Z'),
+    );
+    expect((await service.getClock()).businessDate).toBe('2026-10-04');
+  });
+});

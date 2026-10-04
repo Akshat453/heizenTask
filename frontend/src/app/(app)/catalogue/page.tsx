@@ -23,7 +23,7 @@ export default function CataloguePage() {
   }, []);
 
   if (loading) return <div className="p-8">Loading catalogue...</div>;
-  if (error) return <div className="p-8 text-red-600">{error}</div>;
+  if (error) return <div className="p-8 text-danger">{error}</div>;
 
   return (
     <main className="p-8 max-w-7xl mx-auto">
@@ -32,9 +32,9 @@ export default function CataloguePage() {
       {dishes.length === 0 ? (
         <p className="text-muted-foreground">No dishes found.</p>
       ) : (
-        <div className="overflow-x-auto rounded-lg border bg-white">
+        <div className="overflow-x-auto rounded-lg border bg-card">
           <table className="w-full text-sm text-left">
-            <thead className="bg-stone-50 border-b">
+            <thead className="bg-background border-b">
               <tr>
                 <th className="px-6 py-3 font-medium">SKU</th>
                 <th className="px-6 py-3 font-medium">Name</th>
@@ -45,13 +45,13 @@ export default function CataloguePage() {
             </thead>
             <tbody className="divide-y">
               {dishes.map((d) => (
-                <tr key={d.id} className="hover:bg-stone-50">
+                <tr key={d.id} className="hover:bg-muted">
                   <td className="px-6 py-4 font-mono text-xs">{d.sku}</td>
                   <td className="px-6 py-4 font-medium">{d.name}</td>
                   <td className="px-6 py-4">{d.temperature}</td>
                   <td className="px-6 py-4">${(d.costCents / 100).toFixed(2)}</td>
                   <td className="px-6 py-4">
-                    <span className={`px-2 py-1 rounded text-xs font-medium ${d.isActive ? "bg-emerald-100 text-emerald-800" : "bg-stone-100 text-stone-800"}`}>
+                    <span className={`px-2 py-1 rounded text-xs font-medium ${d.isActive ? "bg-success-soft text-success" : "bg-muted text-foreground"}`}>
                       {d.isActive ? "Active" : "Inactive"}
                     </span>
                   </td>

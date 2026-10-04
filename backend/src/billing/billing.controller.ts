@@ -7,7 +7,6 @@ import { BillingQueryService } from './services/billing-query.service.js';
 import { InvoiceCreationService } from './services/invoice-creation.service.js';
 import { InvoiceLifecycleService } from './services/invoice-lifecycle.service.js';
 import { CreateInvoiceDto, InvoiceQueryDto } from './dto/billing.dto.js';
-import type { StaffUser } from '../generated/prisma/client.js';
 
 @Controller()
 export class BillingController {
@@ -40,13 +39,19 @@ export class BillingController {
 
   @Post('invoices')
   @RequirePermissions('billing.manage')
-  createInvoice(@Body() dto: CreateInvoiceDto, @CurrentUser() user: StaffUser) {
-    return this.creationService.createInvoice(dto, user.id);
+  createInvoice(
+    @Body() dto: CreateInvoiceDto,
+    @CurrentUser('id') staffUserId: string,
+  ) {
+    return this.creationService.createInvoice(dto, staffUserId);
   }
 
   @Post('invoices/:id/pay')
   @RequirePermissions('billing.manage')
-  markPaid(@IdParam() invoiceId: string, @CurrentUser() user: StaffUser) {
-    return this.lifecycleService.markPaid(invoiceId, user.id);
+  markPaid(
+    @IdParam() invoiceId: string,
+    @CurrentUser('id') staffUserId: string,
+  ) {
+    return this.lifecycleService.markPaid(invoiceId, staffUserId);
   }
 }

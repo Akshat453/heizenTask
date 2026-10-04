@@ -142,12 +142,12 @@ export default function EmployeesPage() {
                 <div className="space-y-2">
                   <Label>Name</Label>
                   <Input {...form.register("name")} />
-                  {form.formState.errors.name && <p className="text-sm text-red-500">{form.formState.errors.name.message}</p>}
+                  {form.formState.errors.name && <p className="text-sm text-danger">{form.formState.errors.name.message}</p>}
                 </div>
                 <div className="space-y-2">
                   <Label>Email (Optional)</Label>
                   <Input type="email" {...form.register("email")} />
-                  {form.formState.errors.email && <p className="text-sm text-red-500">{form.formState.errors.email.message}</p>}
+                  {form.formState.errors.email && <p className="text-sm text-danger">{form.formState.errors.email.message}</p>}
                 </div>
               </div>
 
@@ -161,10 +161,10 @@ export default function EmployeesPage() {
                     {companies.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
                   </SelectContent>
                 </Select>
-                {form.formState.errors.companyId && <p className="text-sm text-red-500">{form.formState.errors.companyId.message}</p>}
+                {form.formState.errors.companyId && <p className="text-sm text-danger">{form.formState.errors.companyId.message}</p>}
               </div>
 
-              <div className="space-y-4 border rounded-lg p-4 bg-stone-50">
+              <div className="space-y-4 border rounded-lg p-4 bg-background">
                 <h3 className="font-medium text-sm">Permissions & Capabilities</h3>
                 <div className="flex items-center space-x-2">
                   <Checkbox id="addr" checked={watched.canChooseDeliveryAddress ?? false} onCheckedChange={(c) => form.setValue("canChooseDeliveryAddress", !!c)} />
@@ -230,9 +230,9 @@ export default function EmployeesPage() {
       {employees.length === 0 ? (
         <p className="text-muted-foreground">No employees found.</p>
       ) : (
-        <div className="overflow-x-auto rounded-lg border bg-white">
+        <div className="overflow-x-auto rounded-lg border bg-card">
           <table className="w-full text-sm text-left">
-            <thead className="bg-stone-50 border-b">
+            <thead className="bg-background border-b">
               <tr>
                 <th className="px-6 py-3 font-medium">Name</th>
                 <th className="px-6 py-3 font-medium">Email</th>
@@ -243,7 +243,7 @@ export default function EmployeesPage() {
             </thead>
             <tbody className="divide-y">
               {employees.map((e) => (
-                <tr key={e.id} className="hover:bg-stone-50">
+                <tr key={e.id} className="hover:bg-muted">
                   <td className="px-6 py-4 font-medium">{e.name}</td>
                   <td className="px-6 py-4">{e.email || "-"}</td>
                   <td className="px-6 py-4">{e.company.name}</td>

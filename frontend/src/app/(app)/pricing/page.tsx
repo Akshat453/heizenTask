@@ -25,7 +25,7 @@ export default function PricingPage() {
   }, []);
 
   if (loading) return <div className="p-8">Loading pricing tiers...</div>;
-  if (error) return <div className="p-8 text-red-600">{error}</div>;
+  if (error) return <div className="p-8 text-danger">{error}</div>;
 
   return (
     <main className="p-8 max-w-7xl mx-auto">
@@ -36,23 +36,23 @@ export default function PricingPage() {
       ) : (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {tiers.map((t) => (
-            <div key={t.id} className="p-6 rounded-lg border bg-white shadow-sm flex flex-col h-full">
+            <div key={t.id} className="p-6 rounded-lg border bg-card shadow-sm flex flex-col h-full">
               <div className="flex items-start justify-between mb-4">
                 <h2 className="text-lg font-semibold">{t.name}</h2>
                 {t.isDefault && (
-                  <span className="text-xs bg-emerald-100 text-emerald-800 px-2 py-1 rounded">Default</span>
+                  <span className="text-xs bg-success-soft text-success px-2 py-1 rounded">Default</span>
                 )}
               </div>
               
-              <div className="flex-1 space-y-2 text-sm text-stone-600">
-                <p><span className="font-medium text-stone-900">Strategy:</span> {t.strategy.replace(/_/g, " ")}</p>
+              <div className="flex-1 space-y-2 text-sm text-muted-foreground">
+                <p><span className="font-medium text-foreground">Strategy:</span> {t.strategy.replace(/_/g, " ")}</p>
                 {t.strategy === "COST_MULTIPLIER" && t.costMultiplierBps && (
-                  <p><span className="font-medium text-stone-900">Multiplier:</span> {(t.costMultiplierBps / 10000).toFixed(2)}x</p>
+                  <p><span className="font-medium text-foreground">Multiplier:</span> {(t.costMultiplierBps / 10000).toFixed(2)}x</p>
                 )}
                 {t.strategy === "TIER_PERCENTAGE" && t.sourceAdjustmentBps && (
-                  <p><span className="font-medium text-stone-900">Adjustment:</span> {t.sourceAdjustmentBps > 0 ? "+" : ""}{(t.sourceAdjustmentBps / 100).toFixed(2)}%</p>
+                  <p><span className="font-medium text-foreground">Adjustment:</span> {t.sourceAdjustmentBps > 0 ? "+" : ""}{(t.sourceAdjustmentBps / 100).toFixed(2)}%</p>
                 )}
-                <p className="pt-4"><span className="font-medium text-stone-900">Companies assigned:</span> {t._count.companies}</p>
+                <p className="pt-4"><span className="font-medium text-foreground">Companies assigned:</span> {t._count.companies}</p>
               </div>
             </div>
           ))}

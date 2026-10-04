@@ -19,6 +19,15 @@ const DAY_TO_ISO: Record<DayOfWeek, number> = {
   SUNDAY: 7,
 };
 
+export type BusinessClock = {
+  /** Current business date (YYYY-MM-DD) in the configured timezone. */
+  businessDate: string;
+  /** PlatformSettings.businessTimezone (IANA name). */
+  timezone: string;
+  /** Server time as an ISO instant, for client clock-offset estimation. */
+  serverNow: string;
+};
+
 export type CutoffInfo = {
   /** ISO date string of the delivery date */
   deliveryDate: string;
@@ -173,16 +182,28 @@ export class BusinessTimeService {
       timeZone: tz,
       plainTime: Temporal.PlainTime.from({ hour: 0, minute: 0 }),
     });
-    const endZdt = pd
-      .add({ days: 1 })
-      .toZonedDateTime({
-        timeZone: tz,
-        plainTime: Temporal.PlainTime.from({ hour: 0, minute: 0 }),
-      });
+    const endZdt = pd.add({ days: 1 }).toZonedDateTime({
+      timeZone: tz,
+      plainTime: Temporal.PlainTime.from({ hour: 0, minute: 0 }),
+    });
 
     return {
       start: new Date(startZdt.epochMilliseconds),
       end: new Date(endZdt.epochMilliseconds),
+    };
+  }
+
+  /** Business date, timezone and server time from one clock reading (GET /business-time/now). */
+  async getClock(): Promise<BusinessClock> {
+    const cfg = await this.settings.loadForBusinessTime();
+    const now = this.now();
+    return {
+      businessDate: now
+        .toZonedDateTimeISO(cfg.timezone)
+        .toPlainDate()
+        .toString(),
+      timezone: cfg.timezone,
+      serverNow: new Date(now.epochMilliseconds).toISOString(),
     };
   }
 

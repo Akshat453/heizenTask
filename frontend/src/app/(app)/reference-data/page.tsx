@@ -55,7 +55,7 @@ export default function ReferenceDataPage() {
   }, []);
 
   if (loading) return <div className="p-8">Loading reference data...</div>;
-  if (error) return <div className="p-8 text-red-600">{error}</div>;
+  if (error) return <div className="p-8 text-danger">{error}</div>;
 
   return (
     <main className="p-8 max-w-7xl mx-auto space-y-8">
@@ -119,7 +119,7 @@ function RefSection({ title, type, items, onSaved, hasOrder }: { title: string; 
   };
 
   return (
-    <section className="p-6 rounded-lg border bg-white shadow-sm flex flex-col h-96">
+    <section className="p-6 rounded-lg border bg-card shadow-sm flex flex-col h-96">
       <div className="flex justify-between items-center border-b pb-4 mb-4">
         <h2 className="text-lg font-medium">{title}</h2>
         <Button variant="outline" size="sm" onClick={() => openModal()}><Plus className="h-4 w-4 mr-2" /> Add</Button>
@@ -132,7 +132,7 @@ function RefSection({ title, type, items, onSaved, hasOrder }: { title: string; 
               <div className="space-y-2">
                 <Label>Name</Label>
                 <Input {...form.register("name")} />
-                {form.formState.errors.name && <p className="text-sm text-red-500">{form.formState.errors.name.message}</p>}
+                {form.formState.errors.name && <p className="text-sm text-danger">{form.formState.errors.name.message}</p>}
               </div>
               
               {hasOrder && (
@@ -167,18 +167,18 @@ function RefSection({ title, type, items, onSaved, hasOrder }: { title: string; 
       <div className="overflow-y-auto flex-1 pr-2">
         <ul className="space-y-1">
           {items.map(item => (
-            <li key={item.id} className={`text-sm py-2 border-b border-stone-100 last:border-0 flex justify-between items-center group ${!item.isActive ? 'opacity-50' : ''}`}>
+            <li key={item.id} className={`text-sm py-2 border-b border-border last:border-0 flex justify-between items-center group ${!item.isActive ? 'opacity-50' : ''}`}>
               <div>
                 <span className="font-medium">{item.name}</span>
-                {hasOrder && 'displayOrder' in item && <span className="text-stone-400 text-xs ml-2">(Order: {item.displayOrder})</span>}
-                {!item.isActive && <span className="text-red-500 text-xs ml-2">(Inactive)</span>}
+                {hasOrder && 'displayOrder' in item && <span className="text-muted-foreground text-xs ml-2">(Order: {item.displayOrder})</span>}
+                {!item.isActive && <span className="text-danger text-xs ml-2">(Inactive)</span>}
               </div>
               <Button variant="ghost" size="icon" className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity" onClick={() => openModal(item)}>
                 <Edit2 className="h-3 w-3" />
               </Button>
             </li>
           ))}
-          {items.length === 0 && <li className="text-sm text-stone-500 italic py-2">No items found.</li>}
+          {items.length === 0 && <li className="text-sm text-muted-foreground italic py-2">No items found.</li>}
         </ul>
       </div>
     </section>

@@ -111,17 +111,17 @@ export default function KitchenBoardPage() {
   };
 
   const renderCard = (item: KitchenBoardItem) => (
-    <div key={item.id} className="bg-white dark:bg-zinc-900 border p-4 rounded-lg shadow-sm space-y-3">
+    <div key={item.id} className="bg-card border p-4 rounded-lg shadow-sm space-y-3">
       <div className="flex justify-between items-start">
         <div>
           <p className="text-xs text-muted-foreground font-mono">{item.orderNumber}</p>
           <p className="font-semibold">{item.quantity}x {item.dishNameSnapshot}</p>
         </div>
         <div className={`text-xs px-2 py-1 rounded-full font-medium
-          ${item.timingState === 'ON_TRACK' ? 'bg-green-100 text-green-800' : ''}
-          ${item.timingState === 'AT_RISK' ? 'bg-yellow-100 text-yellow-800' : ''}
-          ${item.timingState === 'LATE' ? 'bg-red-100 text-red-800' : ''}
-          ${item.timingState === 'COMPLETE' ? 'bg-gray-100 text-gray-800' : ''}
+          ${item.timingState === 'ON_TRACK' ? 'bg-success-soft text-success' : ''}
+          ${item.timingState === 'AT_RISK' ? 'bg-warning-soft text-warning' : ''}
+          ${item.timingState === 'LATE' ? 'bg-danger-soft text-danger' : ''}
+          ${item.timingState === 'COMPLETE' ? 'bg-neutral-soft text-neutral' : ''}
         `}>
           {item.timingState}
         </div>
@@ -133,7 +133,7 @@ export default function KitchenBoardPage() {
       </div>
 
       {item.options.length > 0 && (
-        <ul className="text-xs text-zinc-500 list-disc list-inside">
+        <ul className="text-xs text-muted-foreground list-disc list-inside">
           {item.options.map((opt, idx) => (
             <li key={idx}>{opt.optionNameSnapshot} {opt.portionNameSnapshot ? `(${opt.portionNameSnapshot})` : ''}</li>
           ))}
@@ -184,7 +184,7 @@ export default function KitchenBoardPage() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         {/* NOT STARTED */}
         <div className="space-y-4">
-          <h2 className="font-semibold bg-gray-100 p-2 rounded text-center">To Do ({cols.NOT_STARTED.length})</h2>
+          <h2 className="font-semibold bg-neutral-soft p-2 rounded text-center">To Do ({cols.NOT_STARTED.length})</h2>
           <div className="space-y-4">
             {cols.NOT_STARTED.map(renderCard)}
           </div>
@@ -192,7 +192,7 @@ export default function KitchenBoardPage() {
 
         {/* STARTED */}
         <div className="space-y-4">
-          <h2 className="font-semibold bg-blue-100 text-blue-800 p-2 rounded text-center">In Progress ({cols.STARTED.length})</h2>
+          <h2 className="font-semibold bg-info-soft text-info p-2 rounded text-center">In Progress ({cols.STARTED.length})</h2>
           <div className="space-y-4">
             {cols.STARTED.map(renderCard)}
           </div>
@@ -200,7 +200,7 @@ export default function KitchenBoardPage() {
 
         {/* DONE */}
         <div className="space-y-4">
-          <h2 className="font-semibold bg-green-100 text-green-800 p-2 rounded text-center">Done ({cols.DONE.length})</h2>
+          <h2 className="font-semibold bg-success-soft text-success p-2 rounded text-center">Done ({cols.DONE.length})</h2>
           <div className="space-y-4">
             {cols.DONE.map(renderCard)}
           </div>

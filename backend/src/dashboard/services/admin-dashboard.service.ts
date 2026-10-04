@@ -1,12 +1,23 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service.js';
 import { BusinessTimeService } from '../../business-time/business-time.service.js';
-import { dbDateFromIsoDate } from '../../business-time/business-time.utils.js';
 import { SettingsService } from '../../settings/settings.service.js';
 import {
   OrderStatus,
   DeliveryDropStatus,
 } from '../../generated/prisma/enums.js';
+import {
+  dbDateFromIsoDate,
+  isoDateFromDbDate,
+} from '../../business-time/business-time.utils.js';
+import {
+  businessWeek,
+  deliveredSummary,
+  mealsByDate,
+  OPERATIONAL_STATUSES,
+  shiftIsoDate,
+  topCompaniesByMeals,
+} from './dashboard-figures.js';
 import {
   calculatePlannedKitchenReadyAt,
   classifyKitchenTiming,
@@ -61,6 +72,7 @@ export class AdminDashboardService {
           invoiceOrder: null,
         },
         _sum: { billableTotalCents: true },
+        _min: { deliveryDate: true },
       }),
 
       // 5. Active Deliveries
@@ -126,15 +138,80 @@ export class AdminDashboardService {
       }
     }
 
+    const week = businessWeek(isoToday);
+    const [
+      mealsAgg,
+      deliveredToday,
+      placedAgg,
+      deliveriesByDate,
+      statusGroups,
+      topCompaniesThisWeek,
+    ] = await Promise.all([
+      this.prisma.orderLine.aggregate({
+        where: {
+          order: {
+            deliveryDate: businessDate,
+            status: { in: [...OPERATIONAL_STATUSES] },
+          },
+        },
+        _sum: { quantity: true },
+      }),
+      deliveredSummary(this.prisma, { start, end }),
+      this.prisma.order.aggregate({
+        where: {
+          status: OrderStatus.PLACED,
+          deliveryDate: { gte: businessDate },
+        },
+        _count: { _all: true },
+        _sum: { totalCents: true },
+      }),
+      mealsByDate(
+        this.prisma,
+        shiftIsoDate(isoToday, -3),
+        shiftIsoDate(isoToday, 7),
+      ),
+      this.prisma.order.groupBy({
+        by: ['status'],
+        where: {
+          deliveryDate: {
+            gte: dbDateFromIsoDate(week.from),
+            lte: dbDateFromIsoDate(week.to),
+          },
+        },
+        _count: { _all: true },
+      }),
+      topCompaniesByMeals(this.prisma, week.from, week.to),
+    ]);
+    const statusMixThisWeek = Object.fromEntries(
+      Object.values(OrderStatus).map((status) => [
+        status,
+        statusGroups.find((group) => group.status === status)?._count._all ?? 0,
+      ]),
+    ) as Record<OrderStatus, number>;
+    const oldestUninvoiced = uninvoicedAgg._min.deliveryDate;
+
     return {
       businessDate: isoToday,
       metrics: {
         todayOrders,
-        todayBillableCents: billableAgg._sum.billableTotalCents || 0,
-        uninvoicedCents: uninvoicedAgg._sum.billableTotalCents || 0,
+        todayBillableCents: billableAgg._sum.billableTotalCents ?? 0,
+        uninvoicedCents: uninvoicedAgg._sum.billableTotalCents ?? 0,
         lateKitchenOrders,
         latePrepUnits,
         activeDeliveries,
+        mealsToday: mealsAgg._sum.quantity ?? 0,
+        deliveredToday,
+        placedAwaitingCutoff: {
+          count: placedAgg._count._all,
+          totalCents: placedAgg._sum.totalCents ?? 0,
+        },
+        oldestUninvoicedDeliveryDate: oldestUninvoiced
+          ? isoDateFromDbDate(oldestUninvoiced)
+          : null,
+        deliveriesByDate,
+        statusMixThisWeek,
+        week,
+        topCompaniesThisWeek,
       },
     };
   }

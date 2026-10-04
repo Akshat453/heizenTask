@@ -1,94 +1,71 @@
-'use client';
+"use client";
 
-import { useEffect, useState } from 'react';
-import { describeError } from '@/lib/api-client';
-import { dashboardApi, type DispatchDashboardData } from '@/lib/api';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Skeleton } from '@/components/ui/skeleton';
-import { Truck, PackageCheck, Users, AlertCircle } from 'lucide-react';
+import { Truck } from "lucide-react";
+import Link from "next/link";
+import { ErrorState } from "@/components/app/error-state";
+import { KpiGrid } from "@/components/app/kpi-grid";
+import { KpiTile } from "@/components/app/kpi-tile";
+import { Button } from "@/components/ui/button";
+import { DEFINITIONS } from "@/lib/dashboard-definitions";
+import { formatCount } from "@/lib/format";
+import { DashboardHeader } from "./dashboard-header";
+import { DashboardGrid, DashboardPage } from "./dashboard-layout";
+import { DriverLoadPanel, NextDeliveriesPanel, UnassignedDropsPanel } from "./dispatch-panels";
+import { useDispatchDashboard, useTodayDrops } from "./queries";
 
+const D = DEFINITIONS.dispatch;
+
+/** "What leaves next, and who takes it?" */
 export function DispatchDashboard() {
-  const [data, setData] = useState<DispatchDashboardData | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    // The API returns { businessDate, metrics } directly (no `data` envelope).
-    dashboardApi
-      .dispatch()
-      .then(setData)
-      .catch((err: unknown) => setError(describeError(err, 'Failed to load dashboard')));
-  }, []);
-
-  if (error) {
-    return <div className="p-8 text-destructive">{error}</div>;
-  }
+  const dashboard = useDispatchDashboard();
+  const today = dashboard.data?.businessDate;
+  const drops = useTodayDrops(today);
+  const m = dashboard.data?.metrics;
+  const loading = dashboard.isLoading;
+  const dropsProps = {
+    drops: drops.data?.data,
+    loading: drops.isLoading || !today,
+    error: drops.error,
+    onRetry: () => void drops.refetch(),
+    truncated: (drops.data?.pagination.totalItems ?? 0) > (drops.data?.data.length ?? 0),
+  };
 
   return (
-    <div className="space-y-6 p-8 max-w-7xl mx-auto">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Dispatch Dashboard</h1>
-        <p className="text-muted-foreground mt-2">
-          {data ? `Overview for business date: ${data.businessDate}` : 'Loading...'}
-        </p>
-      </div>
+    <DashboardPage>
+      <DashboardHeader
+        businessDate={today}
+        updatedAt={dashboard.dataUpdatedAt}
+        onRefresh={() => {
+          void dashboard.refetch();
+          void drops.refetch();
+        }}
+        refreshing={dashboard.isFetching || drops.isFetching}
+      />
+      <Button className="w-full sm:w-fit" render={<Link href="/dispatch" />} nativeButton={false}>
+        <Truck data-icon="inline-start" />
+        Open dispatch board
+      </Button>
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        {/* Dispatch Ready */}
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Dispatch Ready</CardTitle>
-            <PackageCheck className="h-4 w-4 text-emerald-600" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {!data ? <Skeleton className="h-8 w-16" /> : data.metrics.dispatchReady}
-            </div>
-            <p className="text-xs text-muted-foreground mt-1">Ready for pickup</p>
-          </CardContent>
-        </Card>
+      {dashboard.error ? (
+        <ErrorState error={dashboard.error} title="Could not load the dispatch dashboard" onRetry={() => dashboard.refetch()} />
+      ) : (
+        <KpiGrid>
+          <KpiTile label="Ready to leave" value={m ? formatCount(m.dispatchReady) : null} sub="with or without a driver" definition={D.dispatchReady} href="/dispatch" loading={loading} />
+          <KpiTile label="Ready, no driver" value={m ? formatCount(m.unassigned) : null} sub="needs assigning" definition={D.unassigned} href="/dispatch" loading={loading} />
+          <KpiTile label="Out for delivery" value={m ? formatCount(m.outForDelivery) : null} sub="on the road" definition={D.outForDelivery} href="/dispatch" loading={loading} />
+          <KpiTile label="Running late" value={m ? formatCount(m.lateDeliveries) : null} sub="past delivery time, not delivered" definition={D.lateDeliveries} href="/dispatch" loading={loading} />
+        </KpiGrid>
+      )}
 
-        {/* Unassigned */}
-        <Card className={(data?.metrics.unassigned ?? 0) > 0 ? "border-orange-500/50 bg-orange-500/5" : ""}>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Unassigned</CardTitle>
-            <Users className={`h-4 w-4 ${(data?.metrics.unassigned ?? 0) > 0 ? "text-orange-500" : "text-muted-foreground"}`} />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {!data ? <Skeleton className="h-8 w-16" /> : data.metrics.unassigned}
-            </div>
-            <p className="text-xs text-muted-foreground mt-1">Ready but no driver</p>
-          </CardContent>
-        </Card>
-
-        {/* Out For Delivery */}
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Out for Delivery</CardTitle>
-            <Truck className="h-4 w-4 text-blue-600" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {!data ? <Skeleton className="h-8 w-16" /> : data.metrics.outForDelivery}
-            </div>
-            <p className="text-xs text-muted-foreground mt-1">Currently in transit</p>
-          </CardContent>
-        </Card>
-
-        {/* Late Deliveries */}
-        <Card className={(data?.metrics.lateDeliveries ?? 0) > 0 ? "border-destructive/50 bg-destructive/5" : ""}>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Late Deliveries</CardTitle>
-            <AlertCircle className={`h-4 w-4 ${(data?.metrics.lateDeliveries ?? 0) > 0 ? "text-destructive" : "text-muted-foreground"}`} />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {!data ? <Skeleton className="h-8 w-16" /> : data.metrics.lateDeliveries}
-            </div>
-            <p className="text-xs text-muted-foreground mt-1">Past scheduled delivery</p>
-          </CardContent>
-        </Card>
-      </div>
-    </div>
+      <DashboardGrid
+        main={
+          <>
+            <UnassignedDropsPanel {...dropsProps} />
+            <NextDeliveriesPanel {...dropsProps} />
+          </>
+        }
+        rail={<DriverLoadPanel {...dropsProps} />}
+      />
+    </DashboardPage>
   );
 }

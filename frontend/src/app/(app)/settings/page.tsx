@@ -55,7 +55,7 @@ export default function SettingsPage() {
   }, []);
 
   if (loading) return <div className="p-8">Loading settings...</div>;
-  if (error || !data) return <div className="p-8 text-red-600">{error || "No data"}</div>;
+  if (error || !data) return <div className="p-8 text-danger">{error || "No data"}</div>;
 
   return (
     <main className="p-8 max-w-7xl mx-auto">
@@ -102,37 +102,37 @@ function PlatformSettingsForm({ defaultValues, onSaved }: { defaultValues: Platf
   };
 
   return (
-    <section className="p-6 rounded-lg border bg-white shadow-sm">
+    <section className="p-6 rounded-lg border bg-card shadow-sm">
       <h2 className="text-lg font-medium border-b pb-4 mb-4">Time & Cut-offs</h2>
       <form onSubmit={form.handleSubmit(onSubmit)} className="grid grid-cols-2 gap-4 max-w-md">
         <div className="space-y-2">
           <Label>Business Timezone</Label>
           <Input {...form.register("businessTimezone")} />
-          {form.formState.errors.businessTimezone && <p className="text-sm text-red-500">{form.formState.errors.businessTimezone.message}</p>}
+          {form.formState.errors.businessTimezone && <p className="text-sm text-danger">{form.formState.errors.businessTimezone.message}</p>}
         </div>
         
         <div className="space-y-2">
           <Label>Cut-off Time (UTC)</Label>
           <Input type="time" {...form.register("cutoffTime")} />
-          {form.formState.errors.cutoffTime && <p className="text-sm text-red-500">{form.formState.errors.cutoffTime.message}</p>}
+          {form.formState.errors.cutoffTime && <p className="text-sm text-danger">{form.formState.errors.cutoffTime.message}</p>}
         </div>
         
         <div className="space-y-2">
           <Label>Working Days Before</Label>
           <Input type="number" {...form.register("cutoffWorkingDayCount", { valueAsNumber: true })} />
-          {form.formState.errors.cutoffWorkingDayCount && <p className="text-sm text-red-500">{form.formState.errors.cutoffWorkingDayCount.message}</p>}
+          {form.formState.errors.cutoffWorkingDayCount && <p className="text-sm text-danger">{form.formState.errors.cutoffWorkingDayCount.message}</p>}
         </div>
         
         <div className="space-y-2">
           <Label>Kitchen Ready Buffer (min)</Label>
           <Input type="number" {...form.register("kitchenReadyBufferMinutes", { valueAsNumber: true })} />
-          {form.formState.errors.kitchenReadyBufferMinutes && <p className="text-sm text-red-500">{form.formState.errors.kitchenReadyBufferMinutes.message}</p>}
+          {form.formState.errors.kitchenReadyBufferMinutes && <p className="text-sm text-danger">{form.formState.errors.kitchenReadyBufferMinutes.message}</p>}
         </div>
 
         <div className="space-y-2">
           <Label>At-Risk Window (min)</Label>
           <Input type="number" {...form.register("atRiskWindowMinutes", { valueAsNumber: true })} />
-          {form.formState.errors.atRiskWindowMinutes && <p className="text-sm text-red-500">{form.formState.errors.atRiskWindowMinutes.message}</p>}
+          {form.formState.errors.atRiskWindowMinutes && <p className="text-sm text-danger">{form.formState.errors.atRiskWindowMinutes.message}</p>}
         </div>
 
         <div className="col-span-2 pt-2">
@@ -166,7 +166,7 @@ function WorkingDaysForm({ defaultDays, onSaved }: { defaultDays: string[]; onSa
   };
 
   return (
-    <section className="p-6 rounded-lg border bg-white shadow-sm">
+    <section className="p-6 rounded-lg border bg-card shadow-sm">
       <h2 className="text-lg font-medium border-b pb-4 mb-4">Kitchen Working Days</h2>
       <form onSubmit={onSubmit} className="space-y-4">
         <div className="flex gap-4 flex-wrap">
@@ -220,24 +220,24 @@ function HolidaysForm({ holidays, onSaved }: { holidays: { id: string; date: str
   };
 
   return (
-    <section className="p-6 rounded-lg border bg-white shadow-sm">
+    <section className="p-6 rounded-lg border bg-card shadow-sm">
       <h2 className="text-lg font-medium border-b pb-4 mb-4">Kitchen Holidays</h2>
       
       <div className="mb-6">
         {holidays.length === 0 ? (
-          <p className="text-sm text-stone-400">No holidays scheduled.</p>
+          <p className="text-sm text-muted-foreground">No holidays scheduled.</p>
         ) : (
           <ul className="space-y-2 max-w-md">
             {holidays.map(h => (
-              <li key={h.id} className="text-sm bg-stone-50 px-3 py-2 rounded flex justify-between items-center group">
+              <li key={h.id} className="text-sm bg-background px-3 py-2 rounded flex justify-between items-center group">
                 <div>
                   <span className="font-medium mr-4">{new Date(h.date).toISOString().split('T')[0]}</span>
-                  <span className="text-stone-500">{h.name || "Untitled"}</span>
+                  <span className="text-muted-foreground">{h.name || "Untitled"}</span>
                 </div>
                 <Button 
                   variant="ghost" 
                   size="icon" 
-                  className="h-8 w-8 text-stone-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity"
+                  className="h-8 w-8 text-muted-foreground hover:text-danger opacity-0 group-hover:opacity-100 transition-opacity"
                   onClick={() => deleteHoliday(h.id)}
                   disabled={deletingId === h.id}
                 >
@@ -249,7 +249,7 @@ function HolidaysForm({ holidays, onSaved }: { holidays: { id: string; date: str
         )}
       </div>
 
-      <form onSubmit={form.handleSubmit(onSubmit)} className="flex gap-4 items-end max-w-md p-4 bg-stone-50 rounded-lg border border-stone-200">
+      <form onSubmit={form.handleSubmit(onSubmit)} className="flex gap-4 items-end max-w-md p-4 bg-background rounded-lg border border-border">
         <div className="space-y-2 flex-1">
           <Label>Date</Label>
           <Input type="date" {...form.register("date")} />

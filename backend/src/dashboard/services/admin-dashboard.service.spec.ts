@@ -12,8 +12,17 @@ describe('AdminDashboardService', () => {
 
   beforeEach(async () => {
     prisma = {
-      order: { count: vi.fn(), aggregate: vi.fn(), findMany: vi.fn() },
-      deliveryDrop: { count: vi.fn() },
+      order: {
+        count: vi.fn(),
+        aggregate: vi.fn(),
+        findMany: vi.fn(),
+        groupBy: vi.fn().mockResolvedValue([]),
+      },
+      orderLine: {
+        aggregate: vi.fn().mockResolvedValue({ _sum: { quantity: null } }),
+      },
+      deliveryDrop: { count: vi.fn(), findMany: vi.fn().mockResolvedValue([]) },
+      $queryRaw: vi.fn().mockResolvedValue([]),
     };
     businessTime = {
       getTimezone: vi.fn().mockResolvedValue('UTC'),
@@ -48,6 +57,11 @@ describe('AdminDashboardService', () => {
     });
     prisma.order.aggregate.mockResolvedValueOnce({
       _sum: { billableTotalCents: 10000 },
+      _min: { deliveryDate: null },
+    });
+    prisma.order.aggregate.mockResolvedValueOnce({
+      _count: { _all: 0 },
+      _sum: { totalCents: null },
     });
     prisma.deliveryDrop.count.mockResolvedValue(5);
 

@@ -1,114 +1,111 @@
-'use client';
+"use client";
 
-import { useEffect, useState } from 'react';
-import { describeError } from '@/lib/api-client';
-import { dashboardApi, type AdminDashboardData } from '@/lib/api';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Activity, CircleDollarSign, AlertCircle, Truck } from 'lucide-react';
-import { Skeleton } from '@/components/ui/skeleton';
+import { ErrorState } from "@/components/app/error-state";
+import { KpiGrid } from "@/components/app/kpi-grid";
+import { KpiTile } from "@/components/app/kpi-tile";
+import { Panel } from "@/components/app/panel";
+import { useAuth } from "@/components/auth/auth-provider";
+import { DateTimeText } from "@/components/app/date-time-text";
+import { useBusinessClock } from "@/hooks/use-business-clock";
+import { DEFINITIONS } from "@/lib/dashboard-definitions";
+import { formatCount, formatMoney } from "@/lib/format";
+import { DASHBOARD_PERMISSIONS, P } from "@/lib/permissions";
+import { AdminAttention } from "./admin-attention";
+import { CutoffBanner } from "./cutoff-banner";
+import { DashboardHeader } from "./dashboard-header";
+import { DashboardGrid, DashboardPage } from "./dashboard-layout";
+import { MetricList } from "./metric-list";
+import { useAdminDashboard, useDispatchDashboard, useKitchenDashboard } from "./queries";
+import { useCutoffWindow } from "./use-cutoff-window";
 
-function formatCurrency(cents: number) {
-  return (cents / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
-}
+const D = DEFINITIONS;
 
+/** "Is today on track, and what needs me?" */
 export function AdminDashboard() {
-  const [data, setData] = useState<AdminDashboardData | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { can } = useAuth();
+  const { businessDate } = useBusinessClock();
+  const admin = useAdminDashboard();
+  const kitchen = useKitchenDashboard(DASHBOARD_PERMISSIONS.kitchen.every(can));
+  const dispatch = useDispatchDashboard(DASHBOARD_PERMISSIONS.dispatch.every(can));
+  const cutoff = useCutoffWindow(businessDate, can(P.settingsRead));
+  const m = admin.data?.metrics;
+  const loading = admin.isLoading;
 
-  useEffect(() => {
-    // The API returns { businessDate, metrics } directly (no `data` envelope).
-    dashboardApi
-      .admin()
-      .then(setData)
-      .catch((err: unknown) => setError(describeError(err, 'Failed to load dashboard')));
-  }, []);
-
-  if (error) {
-    return <div className="p-8 text-destructive">{error}</div>;
-  }
+  const refresh = () => {
+    void admin.refetch();
+    void kitchen.refetch();
+    void dispatch.refetch();
+    void cutoff.refetch();
+  };
 
   return (
-    <div className="space-y-6 p-8 max-w-7xl mx-auto">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Admin Dashboard</h1>
-        <p className="text-muted-foreground mt-2">
-          {data ? `Overview for business date: ${data.businessDate}` : 'Loading...'}
-        </p>
-      </div>
+    <DashboardPage>
+      <DashboardHeader
+        businessDate={admin.data?.businessDate}
+        updatedAt={admin.dataUpdatedAt}
+        onRefresh={refresh}
+        refreshing={admin.isFetching}
+      />
+      <CutoffBanner window={cutoff.data} loading={cutoff.isLoading} />
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        {/* Today's Orders */}
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Today&apos;s Active Orders</CardTitle>
-            <Activity className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {!data ? <Skeleton className="h-8 w-20" /> : data.metrics.todayOrders}
-            </div>
-            <p className="text-xs text-muted-foreground mt-1">Excludes cancelled & rejected</p>
-          </CardContent>
-        </Card>
+      {admin.error ? (
+        <ErrorState error={admin.error} title="Could not load the admin dashboard" onRetry={() => admin.refetch()} isRetrying={admin.isFetching} />
+      ) : (
+        <KpiGrid>
+          <KpiTile label="Today's orders" value={m ? formatCount(m.todayOrders) : null} sub="excluding cancelled and rejected" definition={D.admin.todayOrders} loading={loading} />
+          <KpiTile label="Today's billable" value={m ? formatMoney(m.todayBillableCents) : null} sub="frozen at cut-off" definition={D.admin.todayBillable} href="/billing" loading={loading} />
+          <KpiTile
+            label="Late kitchen work"
+            value={m ? formatCount(m.lateKitchenOrders) : null}
+            sub={m ? `${formatCount(m.latePrepUnits)} unfinished prep units` : undefined}
+            definition={D.admin.lateKitchen}
+            href="/kitchen"
+            loading={loading}
+          />
+          <KpiTile label="Active deliveries" value={m ? formatCount(m.activeDeliveries) : null} sub="ready to leave or out" definition={D.admin.activeDeliveries} href="/dispatch" loading={loading} />
+          <KpiTile label="Not invoiced" value={m ? formatMoney(m.uninvoicedCents) : null} sub="all delivery dates" definition={D.admin.uninvoiced} href="/billing" loading={loading} />
+        </KpiGrid>
+      )}
 
-        {/* Today's Billable Value */}
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Today&apos;s Billable Value</CardTitle>
-            <CircleDollarSign className="h-4 w-4 text-emerald-600" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {!data ? <Skeleton className="h-8 w-24" /> : formatCurrency(data.metrics.todayBillableCents)}
-            </div>
-            <p className="text-xs text-muted-foreground mt-1">Includes confirmed-then-cancelled</p>
-          </CardContent>
-        </Card>
-
-        {/* Uninvoiced Amount */}
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Uninvoiced</CardTitle>
-            <CircleDollarSign className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {!data ? <Skeleton className="h-8 w-24" /> : formatCurrency(data.metrics.uninvoicedCents)}
-            </div>
-            <p className="text-xs text-muted-foreground mt-1">All dates</p>
-          </CardContent>
-        </Card>
-
-        {/* Late Kitchen Work */}
-        <Card className={(data?.metrics.lateKitchenOrders ?? 0) > 0 ? "border-destructive/50 bg-destructive/5" : ""}>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Late Kitchen Work</CardTitle>
-            <AlertCircle className={`h-4 w-4 ${(data?.metrics.lateKitchenOrders ?? 0) > 0 ? "text-destructive" : "text-muted-foreground"}`} />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {!data ? <Skeleton className="h-8 w-16" /> : `${data.metrics.lateKitchenOrders} orders`}
-            </div>
-            <p className="text-xs text-muted-foreground mt-1">
-              {!data ? '...' : `${data.metrics.latePrepUnits} prep units`}
-            </p>
-          </CardContent>
-        </Card>
-
-        {/* Active Deliveries */}
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Active Deliveries</CardTitle>
-            <Truck className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {!data ? <Skeleton className="h-8 w-16" /> : data.metrics.activeDeliveries}
-            </div>
-            <p className="text-xs text-muted-foreground mt-1">Ready or Out for delivery today</p>
-          </CardContent>
-        </Card>
-      </div>
-    </div>
+      <DashboardGrid
+        main={<AdminAttention data={admin.data} cutoffWindow={cutoff.data} loading={loading} />}
+        rail={
+          <>
+            {kitchen.data || kitchen.isLoading ? (
+              <Panel title="Kitchen right now" description="Prep units for today's confirmed orders">
+                <MetricList
+                  loading={kitchen.isLoading}
+                  rows={[
+                    { label: "Late", value: kitchen.data?.metrics.late ?? 0, definition: D.kitchen.late, tone: "danger", href: "/kitchen" },
+                    { label: "At risk", value: kitchen.data?.metrics.atRisk ?? 0, definition: D.kitchen.atRisk, tone: "warning", href: "/kitchen" },
+                    { label: "In progress", value: kitchen.data?.metrics.started ?? 0, definition: D.kitchen.started },
+                    { label: "Not started", value: kitchen.data?.metrics.notStarted ?? 0, definition: D.kitchen.notStarted },
+                  ]}
+                />
+                {kitchen.data?.metrics.nextDeadline && (
+                  <p className="mt-3 border-t pt-3 text-xs text-muted-foreground">
+                    Next deadline <DateTimeText value={kitchen.data.metrics.nextDeadline.plannedKitchenReadyAt} mode="time" className="text-foreground" /> ·{" "}
+                    <span className="num">{kitchen.data.metrics.nextDeadline.orderNumber}</span> for {kitchen.data.metrics.nextDeadline.companyName}
+                  </p>
+                )}
+              </Panel>
+            ) : null}
+            {dispatch.data || dispatch.isLoading ? (
+              <Panel title="Dispatch right now" description="Today's drops">
+                <MetricList
+                  loading={dispatch.isLoading}
+                  rows={[
+                    { label: "Running late", value: dispatch.data?.metrics.lateDeliveries ?? 0, definition: D.dispatch.lateDeliveries, tone: "danger", href: "/dispatch" },
+                    { label: "Ready, no driver", value: dispatch.data?.metrics.unassigned ?? 0, definition: D.dispatch.unassigned, tone: "warning", href: "/dispatch" },
+                    { label: "Ready to leave", value: dispatch.data?.metrics.dispatchReady ?? 0, definition: D.dispatch.dispatchReady },
+                    { label: "Out for delivery", value: dispatch.data?.metrics.outForDelivery ?? 0, definition: D.dispatch.outForDelivery },
+                  ]}
+                />
+              </Panel>
+            ) : null}
+          </>
+        }
+      />
+    </DashboardPage>
   );
 }

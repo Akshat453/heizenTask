@@ -136,7 +136,7 @@ export function CompanyForm({ initialData }: { initialData?: Company }) {
   };
 
   return (
-    <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8 max-w-4xl bg-white p-6 rounded-lg border">
+    <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8 max-w-4xl bg-card p-6 rounded-lg border">
       <section>
         <h2 className="text-lg font-medium border-b pb-2 mb-4">Basic Details</h2>
         <div className="grid grid-cols-2 gap-4">
@@ -167,7 +167,7 @@ export function CompanyForm({ initialData }: { initialData?: Company }) {
         {domainFields.map((field, i) => (
           <div key={field.id} className="flex gap-2 items-center mb-2">
             <Input placeholder="example.com" {...form.register(`domains.${i}.domain` as const)} />
-            {domainFields.length > 1 && <Button type="button" variant="ghost" onClick={() => removeDomain(i)}><Trash2 className="h-4 w-4 text-red-500" /></Button>}
+            {domainFields.length > 1 && <Button type="button" variant="ghost" onClick={() => removeDomain(i)}><Trash2 className="h-4 w-4 text-danger" /></Button>}
           </div>
         ))}
         <Button type="button" variant="outline" size="sm" onClick={() => addDomain({ domain: "" })}><Plus className="h-4 w-4 mr-2" /> Add Domain</Button>
@@ -176,10 +176,10 @@ export function CompanyForm({ initialData }: { initialData?: Company }) {
       <section>
         <h2 className="text-lg font-medium border-b pb-2 mb-4">Addresses</h2>
         {addressFields.map((field, i) => (
-          <div key={field.id} className="border p-4 rounded-md mb-4 bg-stone-50 space-y-4">
+          <div key={field.id} className="border p-4 rounded-md mb-4 bg-background space-y-4">
             <div className="flex justify-between items-center">
               <h3 className="font-medium text-sm">Address {i + 1}</h3>
-              {addressFields.length > 1 && <Button type="button" variant="ghost" size="sm" onClick={() => removeAddress(i)}><Trash2 className="h-4 w-4 text-red-500" /></Button>}
+              {addressFields.length > 1 && <Button type="button" variant="ghost" size="sm" onClick={() => removeAddress(i)}><Trash2 className="h-4 w-4 text-danger" /></Button>}
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2"><Label>Label</Label><Input {...form.register(`addresses.${i}.label` as const)} /></div>

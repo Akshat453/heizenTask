@@ -6,7 +6,7 @@ import {
   DeliveryProofService,
   PROOF_URL_TTL_SECONDS,
 } from '../../driver/services/delivery-proof.service.js';
-import { withOnTime } from '../drop-timing.js';
+import { dropPlannedDispatchReadyAt, withOnTime } from '../drop-timing.js';
 import { pageArgs, paginate } from '../../common/dto/pagination-query.dto.js';
 
 @Injectable()
@@ -45,6 +45,7 @@ export class DispatchQueryService {
           company: { select: { name: true } },
           driver: { select: { name: true } },
           _count: { select: { orders: true } },
+          orders: { select: { deliveryLeadMinutesSnapshot: true } },
         },
         orderBy: [{ scheduledDeliveryAt: 'asc' }, { id: 'asc' }],
         ...pageArgs(query),
@@ -52,7 +53,13 @@ export class DispatchQueryService {
       this.prisma.deliveryDrop.count({ where }),
     ]);
     return paginate(
-      data.map(withOnTime),
+      data.map(({ orders, ...drop }) => ({
+        ...withOnTime(drop),
+        plannedDispatchReadyAt: dropPlannedDispatchReadyAt({
+          scheduledDeliveryAt: drop.scheduledDeliveryAt,
+          orders,
+        }),
+      })),
       totalItems,
       query.page,
       query.pageSize,

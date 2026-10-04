@@ -27,7 +27,9 @@ export class KitchenDashboardService {
       where: {
         order: {
           deliveryDate: businessDate, // DATE column: exact business date,
-          status: OrderStatus.CONFIRMED,
+          // CONFIRMED is the kitchen's work; DELIVERED keeps today's finished
+          // units in the total. Orders cancelled after confirmation drop out.
+          status: { in: [OrderStatus.CONFIRMED, OrderStatus.DELIVERED] },
         },
       },
       include: {
@@ -60,7 +62,10 @@ export class KitchenDashboardService {
       };
     }> = [];
 
+    const prepUnitsTotal = prepUnits.length;
+    let prepUnitsDone = 0;
     for (const unit of prepUnits) {
+      if (unit.doneAt) prepUnitsDone++;
       if (!unit.doneAt) {
         if (!unit.startedAt) {
           notStarted++;
@@ -123,6 +128,8 @@ export class KitchenDashboardService {
         atRisk,
         late,
         nextDeadline,
+        prepUnitsTotal,
+        prepUnitsDone,
       },
     };
   }
