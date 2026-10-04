@@ -405,3 +405,13 @@ export type PriceOverride = { itemId: string; priceCents: number | null };
 export type PriceTierListItem = PriceTier & { _count: { companies: number }; missingDishCount: number | null; missingOptionCount: number | null };
 export type ItemTierPrice = { tierId: string; tierName: string; isDefault: boolean; isActive: boolean; effectiveCents: number | null; source: "OVERRIDE" | "DERIVED" | "MISSING" };
 export type PreviewRules = { tierId: string; tierName: string | null; usedDefaultTier: boolean; hiddenCategoryCount: number; hiddenDishCount: number; unpricedDishCount: number };
+
+export type StaffMember = {
+  id: string; name: string; email: string; isActive: boolean; createdAt: string; updatedAt: string;
+  role: { id: string; name: string };
+};
+
+export type StaffRole = { id: string; name: string; description: string | null; permissions: string[] };
+
+export type StaffCreateInput = { name: string; email: string; roleId: string; password: string };
+export type StaffUpdateInput = Partial<{ name: string; roleId: string; isActive: boolean }>;

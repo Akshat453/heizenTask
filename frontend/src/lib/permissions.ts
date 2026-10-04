@@ -28,6 +28,7 @@ export const P = {
   settingsRead: "settings.read",
   settingsManage: "settings.manage",
   dashboardsRead: "dashboards.read",
+  staffManage: "staff.manage",
 } as const;
 
 export type Permission = (typeof P)[keyof typeof P];

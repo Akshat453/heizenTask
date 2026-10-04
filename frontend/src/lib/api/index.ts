@@ -12,6 +12,11 @@ import type {
   Company,
   CompanyCreateInput,
   InvoiceStatus,
+  DayOfWeek,
+  StaffMember,
+  StaffRole,
+  StaffCreateInput,
+  StaffUpdateInput,
   CompanyUpdateInput,
   Employee,
   EmployeeWriteInput,
@@ -185,12 +190,12 @@ export const employeesApi = {
 export const settingsApi = {
   get: () => apiRequest<{
     settings: PlatformSettings;
-    workingDays: string[];
+    workingDays: DayOfWeek[];
     holidays: { id: string; date: string; name: string | null }[];
   }>("/settings"),
   update: (body: Partial<{ cutoffTime: string; cutoffWorkingDayCount: number; businessTimezone: string; kitchenReadyBufferMinutes: number; atRiskWindowMinutes: number }>) =>
     apiRequest<PlatformSettings>("/settings", { method: "PUT", body: JSON.stringify(body) }),
-  upsertWorkingDays: (days: string[]) =>
+  upsertWorkingDays: (days: DayOfWeek[]) =>
     apiRequest<{ dayOfWeek: string }[]>("/settings/working-days", { method: "PUT", body: JSON.stringify({ days }) }),
   createHoliday: (body: { date: string; name?: string }) =>
     apiRequest<{ id: string; date: string; name: string | null }>("/settings/holidays", { method: "POST", body: JSON.stringify(body) }),
@@ -222,6 +227,12 @@ export const dispatchApi = {
 export const staffApi = {
   /** Active staff whose role grants driver.own_drops.deliver (dispatch.assign_driver). */
   drivers: () => apiRequest<DriverOption[]>("/staff/drivers"),
+  /** staff.manage: paginated, sorted by name; search matches name or email. */
+  list: (query: { search?: string; page?: number; pageSize?: number } = {}) =>
+    apiRequest<PaginatedResponse<StaffMember>>(`/staff?${toQuery(query)}`),
+  create: (body: StaffCreateInput) => apiRequest<StaffMember>("/staff", { method: "POST", body: JSON.stringify(body) }),
+  update: (id: string, body: StaffUpdateInput) => apiRequest<StaffMember>(`/staff/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  roles: () => apiRequest<StaffRole[]>("/roles"),
 };
 
 export const driverApi = {

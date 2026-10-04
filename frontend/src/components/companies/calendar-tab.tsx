@@ -18,10 +18,10 @@ export const WEEK: { day: DayOfWeek; short: string }[] = [
   { day: "THURSDAY", short: "Thu" }, { day: "FRIDAY", short: "Fri" }, { day: "SATURDAY", short: "Sat" }, { day: "SUNDAY", short: "Sun" },
 ];
 
-/** Seven toggle chips for the delivery days. */
-export function WorkingDayChips({ value, onChange, disabled }: { value: DayOfWeek[]; onChange: (days: DayOfWeek[]) => void; disabled?: boolean }) {
+/** Seven toggle chips for a set of weekdays (company delivery days or kitchen working days). */
+export function WorkingDayChips({ value, onChange, disabled, label = "Delivery days" }: { value: DayOfWeek[]; onChange: (days: DayOfWeek[]) => void; disabled?: boolean; label?: string }) {
   return (
-    <div role="group" aria-label="Delivery days" className="flex flex-wrap gap-1.5">
+    <div role="group" aria-label={label} className="flex flex-wrap gap-1.5">
       {WEEK.map(({ day, short }) => {
         const on = value.includes(day);
         return (

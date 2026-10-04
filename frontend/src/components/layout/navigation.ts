@@ -72,8 +72,7 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     label: "Admin",
     items: [
-      // No staff routes or staff permission exist in the API yet (backend gap).
-      { label: "Staff", href: "/staff", icon: UserCog, anyOf: [], available: false },
+      { label: "Staff", href: "/staff", icon: UserCog, anyOf: [[P.staffManage]], available: true },
       { label: "Settings", href: "/settings", icon: Settings, anyOf: [[P.settingsRead]], available: true },
     ],
   },

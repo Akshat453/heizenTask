@@ -112,7 +112,7 @@ The backend enum is always `OUT_FOR_DELIVERY`; only the label reads "Out for del
 | `ErrorState` | `error, title?, onRetry?, isRetrying?` | 403 renders AccessDenied; 404 renders Not found |
 | `AccessDenied` | | |
 | `ConfirmDialog` | `open, onOpenChange, title, description, confirmLabel, destructive?, pending?, onConfirm` | the description states the consequence; destructive uses the `danger` button |
-| `FormErrorAlert` | `messages` | pair with `applyServerErrors(error, fieldNames, setError)` from `src/lib/form-errors.ts` |
+| `FormErrorAlert` | `messages`, `title?` | form-level server messages; messages that name a field are shown under that `Field` instead (e.g. `splitEmployeeErrors`) |
 | `MoneyBreakdown` | `rows: {label,cents,muted?}[], total, note?` | right-aligned mono |
 
 ## 9. Library helpers

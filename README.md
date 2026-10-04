@@ -10,6 +10,7 @@ Operations platform for a corporate-catering kitchen: companies and their employ
 - [Reviewer accounts](#reviewer-accounts)
 - [Domain rules](#domain-rules)
 - [API conventions](#api-conventions)
+- [Frontend](#frontend)
 - [Testing](#testing)
 - [Seed data](#seed-data)
 - [Scope and trade-offs](#scope-and-trade-offs)
@@ -240,7 +241,9 @@ All metrics are computed by the backend; the frontend only formats them. Orders 
 | Dispatch | Drops today | Drops whose scheduled delivery time falls on today's business date, in any status. |
 | Dispatch | Waiting on kitchen | Confirmed orders delivering today that are not kitchen-ready yet, so they have no drop. Cancelled orders are excluded. |
 | Dispatch | Delivered today | Same as the admin figure: today's delivered drops and how many were on time. |
-| Driver | Today / delivered / remaining | Drops assigned to you and scheduled for today's business date, in any status / that are delivered / that are not delivered yet. |
+| Driver | Today | Drops assigned to you and scheduled for today's business date, in any status. |
+| Driver | Delivered | Your drops today that are delivered. |
+| Driver | Remaining | Your drops today that are not delivered yet. |
 | Driver | Next stop | Your earliest drop today that is not delivered yet. |
 | Driver | On time / late | Among your delivered drops today: on time when `deliveredAt <= scheduledDeliveryAt`, otherwise late. |
 
@@ -259,6 +262,34 @@ Supporting panels list rows from operational endpoints rather than new figures. 
 | 404 | Not found |
 | 409 | Invalid state, duplicate, foreign-key conflict, or lost concurrency race |
 | 500 | Generic message; Prisma internals are never exposed |
+
+## Frontend
+
+The Next.js app (App Router, client pages) is a presentation layer over the NestJS API. Detailed rules live in `frontend/DESIGN.md` and the endpoint map in `frontend/docs/API_MAP.md`.
+
+**Stack and why**
+
+| Library | Used for | Why |
+|---|---|---|
+| TanStack Query | All server state | Caching, background refetch (kitchen board every 20 s, refetch on focus), and invalidation after each mutation, so screens show the server's latest result instead of locally patched copies. A 401 from any query sends the user to `/login`. |
+| TanStack Table + TanStack Virtual | Management tables; the kitchen board columns | Headless tables with server-side pagination and sorting; virtualized columns keep the kitchen board responsive with hundreds of prep units. |
+| nuqs | Filters, tabs, page and search | State lives in the URL, so a filtered view can be shared, reloaded and navigated with Back. |
+| shadcn/ui on Base UI | Primitives (dialog, sheet, select, popover, command palette) | Accessible, keyboard-operable components that are copied into the repo (`src/components/ui`) and themed with Fernleaf tokens. |
+| react-hook-form + zod | Larger forms (sign-in, order builder) | Typed client-side checks for obvious mistakes; the server stays the authority and its 400 messages are shown next to the field or above the submit button. |
+
+**Rules the frontend follows**
+
+- Every request goes through `src/lib/api-client.ts` (`NEXT_PUBLIC_API_URL`, `credentials: "include"`). The session cookie is HttpOnly and never read by JavaScript.
+- Business rules (pricing, cut-off, orderability, kitchen timing, grouping, on-time, invoice totals, dashboard metrics) are computed by the API. The only client-side money sums are the labelled estimates in the order builder and invoice selection, in integer cents.
+- Dates use the business timezone and "today" comes from `GET /business-time/now`, so changing the browser's timezone does not change the business date.
+- Navigation and buttons are gated with `can(permission)`; role names only pick the dashboard. Typing a URL the user may not open shows Access denied, and the API returns 403 regardless.
+
+**Design system summary**
+
+- **Palette meaning:** primary fern for primary actions, links, the active nav item and the focus ring (never a status); saffron only for "today" and unsaved changes.
+- **Status colours:** amber (warning) needs attention soon; red (danger) a broken promise or failed action; green (success) finished correctly; violet (progress) locked in and being worked; blue (info) waiting on the next step; grey (neutral) inactive, draft or cancelled. A status is always shown as icon + text + soft tint by `StatusBadge`, never by colour alone.
+- Light and dark themes share the same tokens (`src/app/globals.css`); components use tokens only, with no literal colours. Motion respects `prefers-reduced-motion`, and every interactive element has a visible focus ring.
+- Dashboard tile tooltips use the exact wording of the [Dashboards](#dashboards) table, from `src/lib/dashboard-definitions.ts`.
 
 ## Testing
 
