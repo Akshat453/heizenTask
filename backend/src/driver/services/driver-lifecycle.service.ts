@@ -63,7 +63,7 @@ export class DriverLifecycleService {
     if (drop.status !== DeliveryDropStatus.OUT_FOR_DELIVERY)
       throw new ConflictException(`Cannot deliver from status ${drop.status}.`);
 
-    const photoKey = photo
+    const photoLocator = photo
       ? await this.proofService.uploadPhoto(dropId, photo)
       : undefined;
 
@@ -111,7 +111,7 @@ export class DriverLifecycleService {
             status: DeliveryDropStatus.DELIVERED,
             deliveredAt: now,
             ...(note?.trim() ? { deliveryNote: note.trim() } : {}),
-            ...(photoKey ? { photoUrl: photoKey } : {}),
+            ...(photoLocator ? { photoUrl: photoLocator } : {}),
           },
         });
         if (count !== 1)
@@ -143,7 +143,7 @@ export class DriverLifecycleService {
         );
       });
     } catch (error) {
-      if (photoKey) await this.proofService.deletePhoto(photoKey);
+      if (photoLocator) await this.proofService.deletePhoto(photoLocator);
       throw error;
     }
   }

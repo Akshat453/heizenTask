@@ -86,7 +86,7 @@ describe('DriverLifecycleService.markDelivered (upload ordering and cleanup)', (
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
-  it('uploads first, then deletes the object best-effort when the DB transition loses a race', async () => {
+  it('uploads first, then destroys the asset best-effort when the DB transition loses a race', async () => {
     proof.uploadPhoto.mockResolvedValue('delivery-proofs/drop/abc.jpg');
     (
       tx.deliveryDrop as { updateMany: ReturnType<typeof vi.fn> }
@@ -102,7 +102,7 @@ describe('DriverLifecycleService.markDelivered (upload ordering and cleanup)', (
     );
   });
 
-  it('persists only the private object key', async () => {
+  it('persists only the opaque photo locator', async () => {
     proof.uploadPhoto.mockResolvedValue('delivery-proofs/drop/abc.jpg');
     await service.markDelivered('drop', 'driver-a', undefined, JPEG);
     const data = (tx.deliveryDrop as { updateMany: ReturnType<typeof vi.fn> })

@@ -78,8 +78,7 @@ Use `prisma migrate deploy` to apply migrations. Migration `20261004000000_price
 | `FRONTEND_URL` | no | Comma-separated CORS origins (default `http://localhost:3000`). |
 | `AUTH_COOKIE_SAME_SITE` | no | `lax` (default) or `none` (cross-site deployments). |
 | `PORT` | no | Default 3001. |
-| `AWS_S3_BUCKET` | no | Private bucket for delivery photos. If unset, photos are disabled; note-only delivery still works. |
-| `AWS_REGION` | no | Default `us-east-1`. Credentials come from the standard AWS provider chain. |
+| `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` | no | Delivery-proof photo storage (private Cloudinary assets). Set all three or none: with none, photos are disabled and note-only delivery still works; a partial set fails startup naming the missing variable. Backend only: on Render, set them on the backend service, never on the frontend. |
 
 **Frontend (`frontend/.env.local`):**
 
@@ -189,8 +188,9 @@ A required option group with no usable choice makes the Dish unorderable. Secret
 - **onTime** (derived, not stored): `null` before delivery; afterwards `deliveredAt <= scheduledDeliveryAt`. Exact equality is on time, with no grace period.
 - **Proof photo** (optional):
   - JPEG, PNG or WebP up to 5 MB, verified by magic bytes. MIME type and filename are ignored, so SVG and HTML are rejected.
-  - The server generates the private S3 key, which is stored in `DeliveryDrop.photoUrl`, and uploads before the database transition. If the transition fails, the object is deleted best-effort.
-  - `GET /dispatch/drops/:id/proof-url` (requires `dispatch.read`) returns a 5-minute signed URL for the key stored on that Drop.
+  - The server uploads the photo to Cloudinary as an **authenticated** (private) image with a server-generated `public_id` under `delivery-proofs/<dropId>/<uuid>`, before the database transition. `DeliveryDrop.photoUrl` stores only the opaque locator `<public_id>.<format>`, never a URL. If the transition fails, the asset is destroyed best-effort and the original error is returned.
+  - `GET /dispatch/drops/:id/proof-url` (requires `dispatch.read`) returns a 5-minute Cloudinary private download URL generated on demand from the locator on that Drop; callers never supply a `public_id`. A locator in an unknown format returns 410 "Photo unavailable".
+  - Without Cloudinary configuration, photo delivery and proof URLs return 503 "Photo upload is not configured"; note-only delivery works. An invalid or oversized photo is a 400.
 
 ### Staff and business clock
 
@@ -264,7 +264,7 @@ Supporting panels list rows from operational endpoints rather than new figures. 
 
 ```bash
 cd backend
-npm test                 # unit tests (no database, no AWS)
+npm test                 # unit tests (no database, no Cloudinary)
 npm run test:e2e         # PostgreSQL integration + HTTP tests against TEST_DATABASE_URL
 npm run test:db:migrate  # apply migrations to the test database only
 npx tsx prisma/verify-seed.ts   # verify seeded data on the development database

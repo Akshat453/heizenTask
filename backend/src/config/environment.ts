@@ -1,5 +1,17 @@
 import { z } from 'zod';
 
+const optionalText = z
+  .string()
+  .trim()
+  .optional()
+  .transform((value) => (value ? value : undefined));
+
+export const CLOUDINARY_VARS = [
+  'CLOUDINARY_CLOUD_NAME',
+  'CLOUDINARY_API_KEY',
+  'CLOUDINARY_API_SECRET',
+] as const;
+
 const environmentSchema = z
   .object({
     DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
@@ -22,19 +34,23 @@ const environmentSchema = z
       .enum(['development', 'test', 'production'])
       .default('development'),
     PORT: z.coerce.number().int().positive().max(65_535).default(3001),
-    // Optional: photo proof storage. Credentials use the AWS default provider chain.
-    AWS_REGION: z
-      .string()
-      .trim()
-      .optional()
-      .transform((value) => (value ? value : undefined)),
-    AWS_S3_BUCKET: z
-      .string()
-      .trim()
-      .optional()
-      .transform((value) => (value ? value : undefined)),
+    // Optional delivery-proof photo storage (private Cloudinary assets).
+    // All three or none; see the refinement below.
+    CLOUDINARY_CLOUD_NAME: optionalText,
+    CLOUDINARY_API_KEY: optionalText,
+    CLOUDINARY_API_SECRET: optionalText,
   })
-  .passthrough();
+  .passthrough()
+  .superRefine((env, ctx) => {
+    const missing = CLOUDINARY_VARS.filter((name) => !env[name]);
+    // None set: photos are disabled. All set: configured. Anything else is a mistake.
+    if (missing.length > 0 && missing.length < CLOUDINARY_VARS.length)
+      ctx.addIssue({
+        code: 'custom',
+        path: [missing[0]!],
+        message: `Cloudinary is partially configured; also set ${missing.join(', ')} (or remove all CLOUDINARY_* variables to disable photos).`,
+      });
+  });
 
 export function validateEnvironment(
   environment: Record<string, unknown>,

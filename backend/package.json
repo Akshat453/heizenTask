@@ -23,8 +23,6 @@
     "test:db:migrate": "tsx test/support/migrate-test-database.ts"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.1146.0",
-    "@aws-sdk/s3-request-presigner": "^3.1146.0",
     "@js-temporal/polyfill": "^0.5.1",
     "@nestjs/common": "^12.0.1",
     "@nestjs/config": "^12.0.1",
@@ -36,6 +34,7 @@
     "bcryptjs": "^3.0.3",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.15.1",
+    "cloudinary": "^2.11.0",
     "cookie-parser": "^1.4.7",
     "dotenv": "^18.0.5",
     "helmet": "^8.3.0",

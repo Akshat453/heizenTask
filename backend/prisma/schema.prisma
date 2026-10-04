@@ -702,6 +702,8 @@ model DeliveryDrop {
   outForDeliveryAt          DateTime?          @db.Timestamptz(3)
   deliveredAt               DateTime?          @db.Timestamptz(3)
   deliveryNote              String?
+  /// Opaque delivery-proof locator `<public_id>.<format>` (private Cloudinary asset),
+  /// despite the column name. Never a URL; view it through the proof-url endpoint.
   photoUrl                  String?
   createdAt                 DateTime           @default(now()) @db.Timestamptz(3)
   updatedAt                 DateTime           @updatedAt @db.Timestamptz(3)

@@ -1,7 +1,8 @@
-import { BadRequestException, PayloadTooLargeException } from '@nestjs/common';
+import { BadRequestException } from '@nestjs/common';
 
 /** Maximum accepted delivery-proof photo size (5 MB). */
 export const MAX_DELIVERY_PHOTO_BYTES = 5 * 1024 * 1024;
+export const PHOTO_TOO_LARGE_MESSAGE = 'Photo must be 5 MB or smaller.';
 
 export type DetectedImage = {
   contentType: 'image/jpeg' | 'image/png' | 'image/webp';
@@ -37,7 +38,7 @@ export function validateDeliveryPhoto(file: {
   const size = file.buffer.length;
   if (size === 0) throw new BadRequestException('Photo is empty.');
   if (size > MAX_DELIVERY_PHOTO_BYTES || file.size > MAX_DELIVERY_PHOTO_BYTES)
-    throw new PayloadTooLargeException('Photo must be 5 MB or smaller.');
+    throw new BadRequestException(PHOTO_TOO_LARGE_MESSAGE);
   const detected = detectImageType(file.buffer);
   if (!detected)
     throw new BadRequestException('Photo must be a JPEG, PNG or WebP image.');

@@ -97,8 +97,8 @@ export class DispatchQueryService {
     if (!drop.photoUrl)
       throw new NotFoundException('No proof photo exists for this delivery.');
 
-    // The key always comes from the authorized Drop row, never from the request.
-    const url = await this.proofService.generatePresignedUrl(drop.photoUrl);
+    // The locator always comes from the authorized Drop row, never from the request.
+    const url = this.proofService.signedUrl(drop.photoUrl, id);
     return { url, expiresInSeconds: PROOF_URL_TTL_SECONDS };
   }
 }

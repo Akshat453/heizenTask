@@ -21,7 +21,7 @@ import { useDispatchParams } from "@/components/dispatch/use-dispatch-params";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useBusinessClock } from "@/hooks/use-business-clock";
 import { companiesApi, dispatchApi, type DispatchDrop } from "@/lib/api";
-import { describeError } from "@/lib/api-client";
+import { describeError, isApiError } from "@/lib/api-client";
 import { P } from "@/lib/permissions";
 
 export default function DispatchPage() {
@@ -71,7 +71,13 @@ export default function DispatchPage() {
       else window.open(url, "_blank", "noopener");
     } catch (error) {
       tab?.close();
-      toast.error(describeError(error, "Could not open the photo."));
+      toast.error(
+        isApiError(error, 410)
+          ? "Photo unavailable: this delivery's photo can no longer be shown."
+          : isApiError(error, 503)
+            ? "Photo viewing isn't available right now."
+            : describeError(error, "Could not open the photo."),
+      );
     }
   };
 

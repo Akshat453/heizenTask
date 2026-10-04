@@ -4,6 +4,7 @@ import {
   Post,
   Body,
   UploadedFile,
+  UseFilters,
   UseInterceptors,
 } from '@nestjs/common';
 import { IdParam } from '../common/decorators/id-param.decorator.js';
@@ -13,6 +14,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 import { DriverQueryService } from './services/driver-query.service.js';
 import type { UploadedPhoto } from './services/delivery-proof.service.js';
 import { MAX_DELIVERY_PHOTO_BYTES } from './delivery-photo.js';
+import { PhotoSizeFilter } from './photo-size.filter.js';
 import { DriverLifecycleService } from './services/driver-lifecycle.service.js';
 
 @Controller('driver/drops')
@@ -30,6 +32,7 @@ export class DriverController {
 
   @RequirePermissions('driver.own_drops.deliver')
   @Post(':id/deliver')
+  @UseFilters(PhotoSizeFilter)
   @UseInterceptors(
     FileInterceptor('photo', {
       limits: { fileSize: MAX_DELIVERY_PHOTO_BYTES, files: 1 },

@@ -79,11 +79,11 @@ All permissions: catalogue.read/manage, pricing.read/manage, companies.read/mana
 | GET | /staff/drivers | dispatch.assign_driver | | **unpaginated** `[{id, name, email}]`: active staff whose role grants driver.own_drops.deliver (by permission, so it includes ADMIN) |
 | POST | /dispatch/drops/:id/assign-driver | dispatch.assign_driver | `{driverId}` | DeliveryDrop |
 | POST | /dispatch/drops/:id/out-for-delivery | dispatch.update | | DeliveryDrop |
-| GET | /dispatch/drops/:id/proof-url | dispatch.read | | `{url, expiresInSeconds}` |
+| GET | /dispatch/drops/:id/proof-url | dispatch.read | | `{url, expiresInSeconds: 300}`: a Cloudinary private download URL generated on demand (open it in a new tab; never store it). 404 no photo; 410 "Photo unavailable" for an unknown/legacy locator; 503 when photo storage is not configured. |
 | GET | /driver/drops/today | driver.own_drops.read | | `{businessDate, data: (DeliveryDrop & {company:{name, driverInstructions}, _count:{orders}, orders:[{id, orderNumber, employeeName, packagingName, meals}], meals, packaging:[{name, count}]})[]}` (unpaginated, own drops only) |
-| POST | /driver/drops/:id/deliver | driver.own_drops.deliver | multipart: `note?`, `photo?` (JPEG, PNG or WebP, max 5 MB) | DeliveryDrop |
+| POST | /driver/drops/:id/deliver | driver.own_drops.deliver | multipart: `note?`, `photo?` (JPEG, PNG or WebP, max 5 MB) | DeliveryDrop. 400 for an invalid or oversized photo; 503 "Photo upload is not configured" (or the upload failed) with the drop unchanged; note-only always works. |
 
-`DeliveryDrop` fields: id, companyId, status, scheduledDeliveryAt, the address*Snapshot fields, driverStaffUserId, dispatchReadyAt, outForDeliveryAt, deliveredAt, deliveryNote, photoUrl (a private key, never a URL), and **onTime** (`null` before delivery, otherwise `deliveredAt <= scheduledDeliveryAt`). Meals = sum of line quantities per order; `packaging` counts orders per snapshotted packaging name.
+`DeliveryDrop` fields: id, companyId, status, scheduledDeliveryAt, the address*Snapshot fields, driverStaffUserId, dispatchReadyAt, outForDeliveryAt, deliveredAt, deliveryNote, photoUrl (an opaque storage locator `<public_id>.<format>`, never a URL), and **onTime** (`null` before delivery, otherwise `deliveredAt <= scheduledDeliveryAt`). Meals = sum of line quantities per order; `packaging` counts orders per snapshotted packaging name.
 
 ## Catalogue / menu / reference data / pricing
 

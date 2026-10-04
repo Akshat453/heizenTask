@@ -101,7 +101,15 @@ export function DeliverSheet({ drop, onClose, onDelivered }: Props) {
             )}
             {photoError && <p className="text-sm text-danger">{photoError}</p>}
           </div>
-          {failed && <FormErrorAlert messages={[describeError(deliver.error, "Could not mark delivered. Your note and photo are kept; try again.")]} />}
+          {failed && (
+            <FormErrorAlert
+              messages={[
+                isApiError(deliver.error, 503) && photo
+                  ? "Photo upload isn't available right now. You can deliver with a note only."
+                  : describeError(deliver.error, "Could not mark delivered. Your note and photo are kept; try again."),
+              ]}
+            />
+          )}
           <Button className="h-14 w-full text-base" disabled={deliver.isPending} onClick={() => deliver.mutate()}>
             {deliver.isPending ? (photo ? "Uploading photo…" : "Marking delivered…") : failed ? "Retry" : "Mark delivered"}
           </Button>
