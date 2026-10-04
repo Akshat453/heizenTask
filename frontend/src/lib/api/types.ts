@@ -79,20 +79,34 @@ export type Company = {
   domains: { domain: string }[];
   addresses: CompanyAddress[];
   workingDays?: { dayOfWeek: DayOfWeek }[];
-  _count?: { employees: number };
+  _count?: { employees: number; addresses?: number };
+  updatedAt?: string;
 };
 
-/** Write payload for POST/PATCH /companies (validated server-side). */
-export type CompanyWriteInput = {
-  name: string; billingContactName: string; billingContactEmail: string; billingContactPhone?: string;
-  defaultDeliveryTime: string; deliveryLeadMinutes: number; defaultPackagingTypeId: string;
-  workingDays: string[]; domains: string[];
-  addresses: Array<{ id?: string; label: string; line1: string; line2?: string; city: string; region?: string; postalCode?: string; country: string; isActive?: boolean }>;
-  owner?: { name: string; email?: string; canChooseDeliveryAddress: boolean; canChangeDeliveryTime: boolean; canChangePackaging: boolean; allergenIds: string[]; dietaryTagIds: string[] };
-  holidays?: Array<{ date: string; name?: string }>;
-  hiddenCategoryIds?: string[];
-  hiddenDishIds?: string[];
+export type AddressInput = {
+  id?: string; label: string; line1: string; line2?: string | null; city: string;
+  region?: string | null; postalCode?: string | null; country: string; isActive?: boolean;
 };
+export type HolidayInput = { id?: string; date: string; name?: string | null };
+export type OwnerInput = {
+  name: string; email?: string | null; canChooseDeliveryAddress?: boolean; canChangeDeliveryTime?: boolean;
+  canChangePackaging?: boolean; allergenIds: string[]; dietaryTagIds: string[];
+};
+
+/** POST /companies: the owner is created as the company's first employee in the same request. */
+export type CompanyCreateInput = {
+  name: string; billingContactName: string; billingContactEmail: string; billingContactPhone?: string | null;
+  domains: string[]; addresses: AddressInput[]; owner: OwnerInput;
+  priceTierId?: string | null; defaultDeliveryTime: string; deliveryLeadMinutes: number;
+  defaultPackagingTypeId: string; driverInstructions?: string | null; defaultDriverStaffUserId?: string | null;
+  workingDays: DayOfWeek[]; holidays: HolidayInput[]; hiddenCategoryIds: string[]; hiddenDishIds: string[];
+};
+
+/** PATCH /companies/:id: omitted fields are kept; arrays replace the whole set (omitted addresses are deactivated). */
+export type CompanyUpdateInput = Partial<Omit<CompanyCreateInput, "owner">> & { ownerEmployeeId?: string };
+
+/** @deprecated legacy alias used by the old company form. */
+export type CompanyWriteInput = CompanyCreateInput;
 
 export type Employee = {
   id: string; name: string; email: string | null;
@@ -107,6 +121,8 @@ export type Employee = {
 /** Write payload for employee create/update (validated server-side). */
 export type EmployeeWriteInput = {
   name: string; email?: string | null; defaultDeliveryAddressId?: string | null;
+  /** Update only: moves the employee to another company. */
+  companyId?: string;
   canChooseDeliveryAddress?: boolean; canChangeDeliveryTime?: boolean; canChangePackaging?: boolean;
   allergenIds?: string[]; dietaryTagIds?: string[];
 };

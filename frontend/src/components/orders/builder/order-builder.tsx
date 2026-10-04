@@ -30,17 +30,17 @@ const STEPS: { step: BuilderStep; label: string }[] = [
   { step: 3, label: "Delivery and review" },
 ];
 
-type Props = { order?: OrderDetail };
+type Props = { order?: OrderDetail; initialEmployee?: ComboboxItem };
 
 /** Create (no `order`) or edit a DRAFT/PLACED order in three steps. */
-export function OrderBuilder({ order }: Props) {
+export function OrderBuilder({ order, initialEmployee }: Props) {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { businessDate: today, timeZone } = useBusinessClock();
   const editing = Boolean(order);
 
   const [step, setStep] = useState<BuilderStep>(editing ? 2 : 1);
-  const [employee, setEmployee] = useState<ComboboxItem | null>(order ? { id: order.employee.id, label: order.employee.name } : null);
+  const [employee, setEmployee] = useState<ComboboxItem | null>(order ? { id: order.employee.id, label: order.employee.name } : (initialEmployee ?? null));
   const [date, setDate] = useState<string | null>(order ? order.deliveryDate.slice(0, 10) : null);
   const [lines, setLines] = useState<LineDraft[]>(() => (order ? linesFromOrder(order) : []));
   const [delivery, setDelivery] = useState<DeliveryDraft>({});

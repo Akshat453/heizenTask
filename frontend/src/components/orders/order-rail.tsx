@@ -89,7 +89,7 @@ export function OrderRail({ order, ctx }: { order: OrderDetail; ctx: OrderContex
             {order.employee.email && <span className="block text-xs text-muted-foreground">{order.employee.email}</span>}
           </Fact>
           <Fact label="Company">
-            <Link href={`/companies/${order.company.id}/edit`} className="text-primary hover:underline">
+            <Link href={`/companies/${order.company.id}`} className="text-primary hover:underline">
               {order.company.name}
             </Link>
           </Fact>

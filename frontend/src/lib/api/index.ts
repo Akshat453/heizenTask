@@ -10,7 +10,9 @@ import type {
   DishListItem,
   PriceTier,
   Company,
-  CompanyWriteInput,
+  CompanyCreateInput,
+  InvoiceStatus,
+  CompanyUpdateInput,
   Employee,
   EmployeeWriteInput,
   PlatformSettings,
@@ -155,8 +157,8 @@ export const companiesApi = {
     return apiRequest<PaginatedResponse<Company>>(`/companies?${qs}`);
   },
   get: (id: string) => apiRequest<CompanyDetail>(`/companies/${id}`),
-  create: (body: CompanyWriteInput) => apiRequest<Company>("/companies", { method: "POST", body: JSON.stringify(body) }),
-  update: (id: string, body: Partial<CompanyWriteInput>) => apiRequest<Company>(`/companies/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  create: (body: CompanyCreateInput) => apiRequest<CompanyDetail>("/companies", { method: "POST", body: JSON.stringify(body) }),
+  update: (id: string, body: CompanyUpdateInput) => apiRequest<CompanyDetail>(`/companies/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
 };
 
 // ─── Employees ──────────────────────────────────────────────────────────────
@@ -236,11 +238,14 @@ export const driverApi = {
 // ─── Billing ────────────────────────────────────────────────────────────────
 
 export const billingApi = {
-  listInvoices: () => apiRequest<PaginatedResponse<InvoiceSummary>>("/invoices?pageSize=100"),
+  listInvoices: (query: { companyId?: string; status?: InvoiceStatus; page?: number; pageSize?: number } = {}) =>
+    apiRequest<PaginatedResponse<InvoiceSummary>>(`/invoices?${toQuery({ pageSize: 100, ...query })}`),
   getInvoice: async (id: string) => (await apiRequest<{ data: InvoiceDetail }>(`/invoices/${id}`)).data,
   markPaid: (id: string) => apiRequest<Invoice>(`/invoices/${id}/pay`, { method: "POST" }),
-  uninvoiced: (companyId: string) =>
-    apiRequest<PaginatedResponse<UninvoicedOrder> & { totalUninvoicedCents: number }>(`/companies/${companyId}/billing/uninvoiced?pageSize=100`),
+  uninvoiced: (companyId: string, query: { page?: number; pageSize?: number } = {}) =>
+    apiRequest<PaginatedResponse<UninvoicedOrder> & { totalUninvoicedCents: number }>(
+      `/companies/${companyId}/billing/uninvoiced?${toQuery({ pageSize: 100, ...query })}`,
+    ),
   createInvoice: async (companyId: string, orderIds: string[]) =>
     (await apiRequest<{ data: Invoice }>("/invoices", { method: "POST", body: JSON.stringify({ companyId, orderIds }) })).data,
 };

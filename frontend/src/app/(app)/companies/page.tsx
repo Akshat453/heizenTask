@@ -1,79 +1,82 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import type { ColumnDef } from "@tanstack/react-table";
+import { Building2, Plus } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { parseAsInteger, parseAsString, useQueryStates } from "nuqs";
+import { DataTable } from "@/components/app/data-table";
+import { EmptyState } from "@/components/app/empty-state";
+import { FilterBar } from "@/components/app/filter-bar";
+import { PageHeader } from "@/components/app/page-header";
+import { useAuth } from "@/components/auth/auth-provider";
+import { companyKeys } from "@/components/companies/queries";
+import { Button } from "@/components/ui/button";
 import { companiesApi, type Company } from "@/lib/api";
-import { buttonVariants } from "@/components/ui/button";
-import { Plus, Edit2, FileText } from "lucide-react";
+import { formatCount } from "@/lib/format";
+import { P } from "@/lib/permissions";
+
+const columns: ColumnDef<Company, unknown>[] = [
+  {
+    id: "name",
+    header: "Name",
+    enableHiding: false,
+    cell: ({ row }) => (
+      <Link href={`/companies/${row.original.id}`} className="font-medium text-primary hover:underline" onClick={(e) => e.stopPropagation()}>
+        {row.original.name}
+      </Link>
+    ),
+  },
+  {
+    id: "domains",
+    header: "Domains",
+    cell: ({ row }) => (
+      <span className="flex flex-wrap gap-1">
+        {row.original.domains.map((d) => (
+          <span key={d.domain} className="num rounded-full border bg-secondary px-2 text-xs text-secondary-foreground">{d.domain}</span>
+        ))}
+      </span>
+    ),
+  },
+  { id: "tier", header: "Price tier", cell: ({ row }) => row.original.priceTier?.name ?? <span className="text-muted-foreground">Default</span> },
+  { id: "employees", header: "Employees", meta: { align: "right" }, cell: ({ row }) => <span className="num">{formatCount(row.original._count?.employees ?? 0)}</span> },
+  { id: "owner", header: "Owner", cell: ({ row }) => row.original.ownerEmployee?.name ?? <span className="text-muted-foreground">—</span> },
+];
 
 export default function CompaniesPage() {
-  const [companies, setCompanies] = useState<Company[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    async function fetchCompanies() {
-      try {
-        const response = await companiesApi.list();
-        setCompanies(response.data);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load companies");
-      } finally {
-        setLoading(false);
-      }
-    }
-    fetchCompanies();
-  }, []);
-
-  if (loading) return <div className="p-8">Loading companies...</div>;
-  if (error) return <div className="p-8 text-danger">{error}</div>;
-
+  const router = useRouter();
+  const { can } = useAuth();
+  const [params, setParams] = useQueryStates({ q: parseAsString, page: parseAsInteger.withDefault(1), size: parseAsInteger.withDefault(25) }, { history: "replace" });
+  const query = { page: params.page, pageSize: params.size, search: params.q ?? undefined };
+  const companies = useQuery({ queryKey: companyKeys.list(query), queryFn: () => companiesApi.list(query), placeholderData: (p) => p });
   return (
-    <main className="p-8 max-w-7xl mx-auto">
-      <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-semibold">Companies</h1>
-        <Link href="/companies/new" className={buttonVariants()}>
-          <Plus className="h-4 w-4 mr-2" /> Add Company
-        </Link>
-      </div>
-      
-      {companies.length === 0 ? (
-        <p className="text-muted-foreground">No companies found.</p>
-      ) : (
-        <div className="overflow-x-auto rounded-lg border bg-card">
-          <table className="w-full text-sm text-left">
-            <thead className="bg-background border-b">
-              <tr>
-                <th className="px-6 py-3 font-medium">Name</th>
-                <th className="px-6 py-3 font-medium">Owner</th>
-                <th className="px-6 py-3 font-medium">Domains</th>
-                <th className="px-6 py-3 font-medium">Employees</th>
-                <th className="px-6 py-3 font-medium text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {companies.map((c) => (
-                <tr key={c.id} className="hover:bg-muted">
-                  <td className="px-6 py-4 font-medium">{c.name}</td>
-                  <td className="px-6 py-4">{c.ownerEmployee?.name || "None"}</td>
-                  <td className="px-6 py-4">
-                    {c.domains.map((d) => d.domain).join(", ")}
-                  </td>
-                  <td className="px-6 py-4">{c._count?.employees || 0}</td>
-                  <td className="px-6 py-4 text-right flex justify-end gap-2">
-                    <Link href={`/companies/${c.id}/billing`} className={buttonVariants({ variant: "ghost", size: "icon" })} title="Generate Invoice">
-                      <FileText className="h-4 w-4" />
-                    </Link>
-                    <Link href={`/companies/${c.id}/edit`} className={buttonVariants({ variant: "ghost", size: "icon" })} title="Edit Company">
-                      <Edit2 className="h-4 w-4" />
-                    </Link>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+    <main className="flex flex-col gap-6 p-4 md:p-6">
+      <PageHeader
+        title="Companies"
+        description="Corporate customers: their people, addresses, calendar, menu and pricing."
+        actions={
+          can(P.companiesManage) && (
+            <Button render={<Link href="/companies/new" />} nativeButton={false}>
+              <Plus data-icon="inline-start" /> New company
+            </Button>
+          )
+        }
+      />
+      <DataTable
+        columns={columns}
+        data={companies.data?.data}
+        pagination={companies.data?.pagination}
+        onPageChange={(page) => void setParams({ page })}
+        onPageSizeChange={(size) => void setParams({ size, page: null })}
+        getRowId={(c) => c.id}
+        onRowClick={(c) => router.push(`/companies/${c.id}`)}
+        isLoading={companies.isLoading}
+        error={companies.error}
+        onRetry={() => void companies.refetch()}
+        toolbar={<FilterBar searchKey="q" searchPlaceholder="Company name or domain" />}
+        empty={<EmptyState icon={Building2} title="No companies match" description="Clear the search, or add the first company." />}
+      />
     </main>
   );
 }
